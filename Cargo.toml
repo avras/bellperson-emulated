@@ -1,0 +1,10 @@
+[package]
+name = "bellperson-emulated"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bellperson = "0.24.1"
+ff = { version = "0.12.0", features = ["derive"] }
+num-bigint = "0.4.3"
+num-traits = "0.2.15"
