@@ -488,6 +488,17 @@ where
         )
     }
 
+    pub fn neg<CS>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let zero = Self::zero();
+        zero.sub(&mut cs.namespace(|| "negate"), self)
+    }
+
     fn mul_precondition(
         a: &Self,
         b: &Self,
