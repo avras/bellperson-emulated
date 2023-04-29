@@ -38,8 +38,8 @@ where
     P: EmulatedFieldParams,
 {
     fn compact(
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
     ) -> Result<(EmulatedLimbs<F>, EmulatedLimbs<F>, usize), SynthesisError> {
         let max_overflow = a.overflow.max(b.overflow);
         // Substract one bit to account for overflow due to grouping in compact_limbs
@@ -167,8 +167,8 @@ where
     /// For allocated inputs, it does not ensure that the values are equal modulo the field order.
     fn assert_limbs_equality<CS>(
         cs: &mut CS,
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
     ) -> Result<(), SynthesisError>
     where
         CS: ConstraintSystem<F>,
@@ -212,8 +212,8 @@ where
     /// Asserts that the limbs represent the same integer value modulo the modulus.
     fn assert_is_equal<CS>(
         cs: &mut CS,
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
     ) -> Result<(), SynthesisError>
     where
         CS: ConstraintSystem<F>,
@@ -229,7 +229,7 @@ where
             }
         }
 
-        let diff = Self::sub(&mut cs.namespace(|| "a-b"), a, b)?;
+        let diff = a.sub(&mut cs.namespace(|| "a-b"), b)?;
         let k = diff.compute_quotient(&mut cs.namespace(|| "quotient when divided by modulus"))?;
 
         let kp = Self::reduce_and_apply_op(
@@ -245,30 +245,30 @@ where
     }
 
     pub fn reduce<CS>(
+        &self,
         cs: &mut CS,
-        x: &EmulatedFieldElement<F, P>,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
-        x.enforce_width_conditional(&mut cs.namespace(|| "ensure bitwidths in input"))?;
-        if x.overflow == 0 {
-            return Ok(x.clone());
+        self.enforce_width_conditional(&mut cs.namespace(|| "ensure bitwidths in input"))?;
+        if self.overflow == 0 {
+            return Ok(self.clone());
         }
 
-        if x.is_constant() {
+        if self.is_constant() {
             eprintln!("Trying to reduce a constant with overflow flag set; should not happen");
             return Err(SynthesisError::Unsatisfiable);
         }
 
-        let r = x.compute_rem(&mut cs.namespace(|| "remainder modulo field modulus"))?;
-        Self::assert_is_equal(&mut cs.namespace(|| "check equality"), &r, &x)?;
+        let r = self.compute_rem(&mut cs.namespace(|| "remainder modulo field modulus"))?;
+        Self::assert_is_equal(&mut cs.namespace(|| "check equality"), &r, self)?;
         Ok(r)
     }
 
     fn add_precondition(
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
     ) -> Result<usize, OverflowError> {
         let reduce_right = a.overflow < b.overflow;
         let next_overflow = a.overflow.max(b.overflow) + 1;
@@ -281,10 +281,10 @@ where
     }
 
     fn add_op<CS>(
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
         next_overflow: usize,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -292,7 +292,7 @@ where
             let a_int = BigInt::from(a);
             let b_int = BigInt::from(b);
             let res_int = (a_int + b_int).rem(P::modulus());
-            return Ok(EmulatedFieldElement::<F, P>::from(&res_int));
+            return Ok(Self::from(&res_int));
         }
 
         let num_res_limbs = a.len().max(b.len());
@@ -336,28 +336,28 @@ where
             limb_values: Some(res_values),
         };
         
-        Ok(EmulatedFieldElement::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
+        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
     
     pub fn add<CS>(
+        &self,
         cs: &mut CS,
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+        other: &Self,
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         Self::reduce_and_apply_op(
             &mut cs.namespace(|| "compute a + b"),
             Optype::Add,
-            a,
-            b,
+            self,
+            other,
         )
     }
 
     fn sub_precondition(
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
     ) -> Result<usize, OverflowError> {
         let reduce_right = a.overflow < b.overflow;
         let next_overflow = a.overflow.max(b.overflow + 2);
@@ -398,10 +398,10 @@ where
     }
 
     fn sub_op<CS>(
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
         next_overflow: usize,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -409,7 +409,7 @@ where
             let a_int = BigInt::from(a);
             let b_int = BigInt::from(b);
             let res_int = (a_int + b_int).rem(P::modulus());
-            return Ok(EmulatedFieldElement::<F, P>::from(&res_int));
+            return Ok(Self::from(&res_int));
         }
 
         let num_res_limbs = a.len().max(b.len());
@@ -469,28 +469,28 @@ where
             limb_values: Some(res_values),
         };
         
-        Ok(EmulatedFieldElement::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
+        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
 
     pub fn sub<CS>(
+        &self,
         cs: &mut CS,
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+        other: &Self,
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         Self::reduce_and_apply_op(
             &mut cs.namespace(|| "compute a - b"),
             Optype::Sub,
-            a,
-            b,
+            self,
+            other,
         )
     }
 
     fn mul_precondition(
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
     ) -> Result<usize, OverflowError> {
         let reduce_right = a.overflow < b.overflow;
         let max_carry_bits = (a.len().min(b.len()) as f32).log2().ceil() as usize;
@@ -505,10 +505,10 @@ where
 
     fn mul_op<CS>(
         cs: &mut CS,
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
+        a: &Self,
+        b: &Self,
         next_overflow: usize,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -516,7 +516,7 @@ where
             let a_int = BigInt::from(a);
             let b_int = BigInt::from(b);
             let res_int = (a_int * b_int).rem(P::modulus());
-            return Ok(EmulatedFieldElement::<F, P>::from(&res_int));
+            return Ok(Self::from(&res_int));
         }
 
         let num_prod_limbs = a.len() + b.len() - 1;
@@ -593,36 +593,35 @@ where
             limb_values: Some(prod_values),
         };
         
-        Ok(EmulatedFieldElement::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
+        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
 
     pub fn mul<CS>(
+        &self,
         cs: &mut CS,
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+        other: &Self,
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         Self::reduce_and_apply_op(
             &mut cs.namespace(|| "compute a * b"),
             Optype::Mul,
-            a,
-            b,
+            self,
+            other,
         )
     }
 
     pub fn inverse<CS>(
+        &self,
         cs: &mut CS,
-        a: &EmulatedFieldElement<F, P>,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
-        let a_inv = a.compute_inverse(&mut cs.namespace(|| "multiplicative inverse"))?;
-        let prod = Self::mul(
+        let a_inv = self.compute_inverse(&mut cs.namespace(|| "multiplicative inverse"))?;
+        let prod = self.mul(
             &mut cs.namespace(|| "product of a and a_inv"),
-            a,
             &a_inv
         )?;
         Self::assert_is_equal(
@@ -635,26 +634,25 @@ where
     }
 
     pub fn divide<CS>(
+        &self,
         cs: &mut CS,
-        numer: &EmulatedFieldElement<F, P>,
-        denom: &EmulatedFieldElement<F, P>,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+        denom: &Self,
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
-        let ratio = numer.compute_ratio(
+        let ratio = self.compute_ratio(
             &mut cs.namespace(|| "ratio"),
             denom
         )?;
-        let prod = Self::mul(
+        let prod = ratio.mul(
             &mut cs.namespace(|| "product of a and a_inv"),
-            &ratio,
             &denom,
         )?;
         Self::assert_is_equal(
             &mut cs.namespace(|| "product equals one"),
             &prod,
-            &numer,
+            self,
         )?;
 
         Ok(ratio)
@@ -663,9 +661,9 @@ where
     fn reduce_and_apply_op<CS>(
         cs: &mut CS,
         op_type: Optype,
-        a: &EmulatedFieldElement<F, P>,
-        b: &EmulatedFieldElement<F, P>,
-    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+        a: &Self,
+        b: &Self,
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -678,8 +676,8 @@ where
             Optype::Mul => Self::mul_precondition,
         };
 
-        let mut a_r: EmulatedFieldElement<F, P> = a.clone();
-        let mut b_r: EmulatedFieldElement<F, P> = b.clone();
+        let mut a_r: Self = a.clone();
+        let mut b_r: Self = b.clone();
         let next_overflow: usize = loop {
             let res =  precondition(a, b);
             if res.is_ok() {
@@ -689,15 +687,13 @@ where
             else {
                 let err = res.err().unwrap();
                 if err.reduce_right {
-                    a_r = Self::reduce(
+                    a_r = a_r.reduce(
                         &mut cs.namespace(|| "reduce a" ),
-                        &a_r,
                     )?;
                 }
                 else {
-                    b_r = Self::reduce(
+                    b_r = b_r.reduce(
                         &mut cs.namespace(|| "reduce b" ),
-                        &b_r,
                     )?;
                 }
             }
