@@ -646,11 +646,11 @@ where
             denom
         )?;
         let prod = ratio.mul(
-            &mut cs.namespace(|| "product of a and a_inv"),
+            &mut cs.namespace(|| "product of ratio and denominator"),
             &denom,
         )?;
         Self::assert_is_equal(
-            &mut cs.namespace(|| "product equals one"),
+            &mut cs.namespace(|| "product equals numerator"),
             &prod,
             self,
         )?;
