@@ -1,3 +1,4 @@
+use std::ops::Div;
 use std::{marker::PhantomData, ops::Rem};
 
 use bellperson::{LinearCombination, SynthesisError, ConstraintSystem};
@@ -5,25 +6,67 @@ use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, Sign, BigUint};
 use num_traits::{Zero, One};
 
-use crate::{params::EmulatedFieldParams, util::{range_check_constant, range_check_lc, mul_lc_with_scalar}};
+use crate::util::{range_check_constant, range_check_lc, mul_lc_with_scalar, decompose, bigint_to_scalar};
+use crate::params::EmulatedFieldParams;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AllocatedLimbs<F: PrimeField + PrimeFieldBits> {
-    limbs: Vec<LinearCombination<F>>,
-    limb_values: Option<Vec<F>>,
+    pub(crate) limbs: Vec<LinearCombination<F>>,
+    pub(crate) limb_values: Option<Vec<F>>,
 }
 
-#[derive(Debug, Clone)]
 pub enum EmulatedLimbs<F: PrimeField + PrimeFieldBits> {
     Allocated(AllocatedLimbs<F>),
     Constant(Vec<F>),
 }
 
+impl<F> From<Vec<F>> for EmulatedLimbs<F>
+where
+    F: PrimeField + PrimeFieldBits
+{
+    fn from(value: Vec<F>) -> Self {
+        EmulatedLimbs::Constant(value)
+    }
+}
+
+impl<F> AsRef<EmulatedLimbs<F>> for EmulatedLimbs<F>
+where
+    F: PrimeField + PrimeFieldBits
+{
+    fn as_ref(&self) -> &EmulatedLimbs<F> {
+        self
+    }
+}
+
+impl<F: PrimeField + PrimeFieldBits> Clone for EmulatedLimbs<F> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Allocated(a) => Self::Allocated(a.clone()),
+            Self::Constant(c) => Self::Constant(c.clone()),
+        }
+    }
+}
+
 pub struct EmulatedFieldElement<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> {
-    limbs: EmulatedLimbs<F>,
-    overflow: usize,
-    internal: bool,
+    pub(crate) limbs: EmulatedLimbs<F>,
+    pub(crate) overflow: usize,
+    pub(crate) internal: bool,
     marker: PhantomData<P>,
+}
+
+impl<F, P> Clone for EmulatedFieldElement<F, P>
+where
+    F: PrimeField + PrimeFieldBits,
+    P: EmulatedFieldParams,
+{
+    fn clone(&self) -> Self {
+        Self {
+            limbs: self.limbs.clone(),
+            overflow: self.overflow.clone(),
+            internal: self.internal.clone(),
+            marker: self.marker.clone(),
+        }
+    }
 }
 
 impl<F, P> From<&BigInt> for EmulatedFieldElement<F, P>
@@ -31,6 +74,11 @@ where
     F: PrimeField + PrimeFieldBits,
     P: EmulatedFieldParams,
 {
+    /// Converts a [BigInt] into an [EmulatedFieldElement]
+    /// 
+    /// Note that any [BigInt] larger than the field modulus is
+    /// first reduced. A [BigInt] equal to the modulus itself is not
+    /// reduced.
     fn from(value: &BigInt) -> Self {
         let mut v = value.clone();
         assert!(v.sign() != Sign::Minus);
@@ -98,7 +146,7 @@ where
     F: PrimeField + PrimeFieldBits,
     P: EmulatedFieldParams,
 {
-    fn new_internal_element(
+    pub fn new_internal_element(
         limbs: EmulatedLimbs<F>,
         overflow: usize,
     ) -> Self {
@@ -107,6 +155,54 @@ where
             overflow,
             internal: true,
             marker: PhantomData,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self.limbs.as_ref() {
+            // TODO: Check that the lengths of allocated_limbs.limbs and allocated_limbs.limb_values match
+            EmulatedLimbs::Allocated(allocated_limbs) => allocated_limbs.limbs.len(),
+            EmulatedLimbs::Constant(constant_limbs) => constant_limbs.len(),
+        }
+    }
+
+    pub fn is_constant(
+        &self,
+    ) -> bool {
+        if let EmulatedLimbs::Constant(_) = self.limbs {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn allocate_limbs<CS>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<EmulatedLimbs<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        if let EmulatedLimbs::Constant(limb_values) = &self.limbs {
+            let mut lc_vec: Vec<LinearCombination<F>> = vec![];
+
+            for (i, v) in limb_values.into_iter().enumerate() {
+                let allocated_limb = cs.alloc(
+                    || format!("allocating limb {i}"),
+                    || Ok(*v),
+                )?;
+                lc_vec.push(LinearCombination::zero() + allocated_limb);
+            }
+            
+            let allocated_limbs = AllocatedLimbs {
+                limbs: lc_vec,
+                limb_values: Some(limb_values.clone()),
+            };
+            
+            Ok(EmulatedLimbs::Allocated(allocated_limbs))
+        } else {
+            eprintln!("input must have constant limb values");
+            Err(SynthesisError::Unsatisfiable)
         }
     }
 
@@ -170,7 +266,7 @@ where
 
     /// Enforces limb bit widths in a [EmulatedFieldElement] if it is not an
     /// internal element or a constant
-    fn enforce_width_conditional<CS>(
+    pub fn enforce_width_conditional<CS>(
         &self,
         cs: &mut CS,
     ) -> Result<bool, SynthesisError>
@@ -180,7 +276,7 @@ where
         if self.internal {
             return Ok(false);
         }
-        if let EmulatedLimbs::Constant(_) = self.limbs {
+        if self.is_constant() {
             return Ok(false);
         }
         self.enforce_width(&mut cs.namespace(|| "enforce width"), true)?;
@@ -207,19 +303,15 @@ where
         Ok(elem)
     }
 
-    fn compact_limbs<CS>(
+    pub fn compact_limbs(
         &self,
-        cs: &mut CS,
         group_size: usize,
         new_bits_per_limb: usize,
-    ) -> Result<EmulatedLimbs<F>, SynthesisError>
-    where
-        CS: ConstraintSystem<F>,
-    {
+    ) -> Result<EmulatedLimbs<F>, SynthesisError> {
         if P::bits_per_limb() == new_bits_per_limb {
             return Ok(self.limbs.clone());
         }
-        if let EmulatedLimbs::Constant(_) = self.limbs {
+        if self.is_constant() {
             eprintln!("compact_limbs not implemented for constants");
             return Err(SynthesisError::Unsatisfiable);
         }
@@ -246,7 +338,7 @@ where
             for i in 0..new_num_limbs {
                 for j in 0..group_size {
                     if i*group_size + j < allocated_limbs.limbs.len() {
-                        res[i] = mul_lc_with_scalar(allocated_limbs.limbs[i*group_size+j].clone(), coeffs[j]) + &res[i];
+                        res[i] = mul_lc_with_scalar(&allocated_limbs.limbs[i*group_size+j], &coeffs[j]) + &res[i];
                         res_values[i] += allocated_limbs.limb_values.as_ref().unwrap()[i*group_size+j] * coeffs[j];
                     }
                 }
@@ -257,37 +349,63 @@ where
         return Err(SynthesisError::Unsatisfiable);
     }
 
-    fn compact<CS>(
+    /// Computes the remainder modulo the field modulus
+    pub fn compute_rem<CS>(
+        &self,
         cs: &mut CS,
-        a: &Self,
-        b: &Self,
-    ) -> Result<(EmulatedLimbs<F>, EmulatedLimbs<F>, usize), SynthesisError>
+    ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
-        let max_overflow = a.overflow.max(b.overflow);
-        // Substract one bit to account for overflow due to grouping in compact_limbs
-        let max_num_bits = F::CAPACITY as usize - 1 - max_overflow;
-        let group_size = max_num_bits / P::bits_per_limb();
+        let a_int: BigInt = self.into();
+        let p = P::modulus();
+        let r_int = a_int.rem(p);
+        let r_value = Self::from(&r_int);
 
-        if group_size == 0 {
-            // No space for compacting
-            return Ok((a.limbs.clone(), b.limbs.clone(), P::bits_per_limb()));
-        }
-
-        let new_bits_per_limb = P::bits_per_limb() * group_size;
-        let a_compact = a.compact_limbs(
-            &mut cs.namespace(|| "compact a limbs"),
-            group_size,
-            new_bits_per_limb
-        )?;
-        let b_compact = b.compact_limbs(
-            &mut cs.namespace(|| "compact b limbs"),
-            group_size,
-            new_bits_per_limb
+        let res_limbs = r_value.allocate_limbs(
+            &mut cs.namespace(|| "allocate from remainder value")
         )?;
 
-        return Ok((a_compact, b_compact, new_bits_per_limb));
+        let res = Self::pack_limbs(
+            &mut cs.namespace(|| "enforce bitwidths on remainder"),
+            res_limbs,
+            true,
+        )?;
+        Ok(res)
     }
+
+    /// Computes the remainder modulo the field modulus
+    pub fn compute_quotient<CS>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        // TODO: Check the need for the "+ 1"
+        let num_res_limbs = (self.len()*P::bits_per_limb() + self.overflow + 1
+            - (P::modulus().bits() as usize)    // Deduct the modulus bit size
+            + P::bits_per_limb() - 1) /         // This term is to round up to next integer
+            P::bits_per_limb();
+
+        let a_int: BigInt = self.into();
+        let p = P::modulus();
+        let k_int = a_int.div(p);
+        let k_int_limbs = decompose(&k_int, P::bits_per_limb(), num_res_limbs)?;
+
+        let res_limbs = k_int_limbs
+            .into_iter()
+            .map(|i| bigint_to_scalar(i))
+            .collect::<Vec<F>>()
+            .into();
+
+        let res = Self::pack_limbs(
+            &mut cs.namespace(|| "enforce bitwidths on quotient"),
+            res_limbs,
+            true,
+        )?;
+        Ok(res)
+    }
+
 }
 

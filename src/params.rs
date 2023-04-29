@@ -1,6 +1,7 @@
 use num_bigint::{BigInt, Sign};
 
-/// Emulated field is assumed to be prime
+/// Emulated field is assumed to be prime. So inverses alway
+/// exist for non-zero field elements
 pub trait EmulatedFieldParams {
     fn num_limbs() -> usize;
     fn bits_per_limb() -> usize;
