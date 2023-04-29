@@ -625,6 +625,54 @@ pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> 
         )
     }
 
+    fn inverse<CS>(
+        cs: &mut CS,
+        a: &EmulatedFieldElement<F, P>,
+    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let a_inv = a.compute_inverse(&mut cs.namespace(|| "multiplicative inverse"))?;
+        let prod = Self::mul(
+            &mut cs.namespace(|| "product of a and a_inv"),
+            a,
+            &a_inv
+        )?;
+        Self::assert_is_equal(
+            &mut cs.namespace(|| "product equals one"),
+            &prod,
+            &Self::one(),
+        )?;
+        
+        Ok(a_inv)
+    }
+
+    fn divide<CS>(
+        cs: &mut CS,
+        numer: &EmulatedFieldElement<F, P>,
+        denom: &EmulatedFieldElement<F, P>,
+    ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let ratio = numer.compute_ratio(
+            &mut cs.namespace(|| "ratio"),
+            denom
+        )?;
+        let prod = Self::mul(
+            &mut cs.namespace(|| "product of a and a_inv"),
+            &ratio,
+            &denom,
+        )?;
+        Self::assert_is_equal(
+            &mut cs.namespace(|| "product equals one"),
+            &prod,
+            &numer,
+        )?;
+
+        Ok(ratio)
+    }
+
     fn reduce_and_apply_op<CS>(
         cs: &mut CS,
         op_type: Optype,

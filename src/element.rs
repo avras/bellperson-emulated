@@ -407,5 +407,75 @@ where
         Ok(res)
     }
 
+    /// Computes the multiplicative inverse
+    pub fn compute_inverse<CS>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let mut a_int: BigInt = self.into();
+        let p = P::modulus();
+        a_int = a_int.rem(&p);
+        if a_int.is_zero() {
+            eprintln!("Inverse of zero element cannot be calculated");
+            return Err(SynthesisError::DivisionByZero);
+        }
+        let p_minus_2 = &p - BigInt::from(2);
+        // a^(p-1) = 1 mod p for non-zero a. So a^(-1) = a^(p-2)
+        let a_inv_int = a_int.modpow(&p_minus_2, &p);
+        let a_inv_value = Self::from(&a_inv_int);
+
+        let a_inv_limbs = a_inv_value.allocate_limbs(
+            &mut cs.namespace(|| "allocate from inverse value")
+        )?;
+
+        let a_inv = Self::pack_limbs(
+            &mut cs.namespace(|| "enforce bitwidths on inverse"),
+            a_inv_limbs,
+            true,
+        )?;
+
+        Ok(a_inv)
+    }
+
+    /// Computes the ratio modulo the field modulus
+    pub fn compute_ratio<CS>(
+        &self,
+        cs: &mut CS,
+        other: &Self,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let numer_int: BigInt = self.into();
+        let mut denom_int: BigInt = other.into();
+        let p = P::modulus();
+        denom_int = denom_int.rem(&p);
+        if denom_int.is_zero() {
+            eprintln!("Inverse of zero element cannot be calculated");
+            return Err(SynthesisError::DivisionByZero);
+        }
+        let p_minus_2 = &p - BigInt::from(2);
+        // a^(p-1) = 1 mod p for non-zero a. So a^(-1) = a^(p-2)
+        let denom_inv_int = denom_int.modpow(&p_minus_2, &p);
+        let ratio_int = (numer_int * denom_inv_int).rem(&p);
+
+        let ratio_value = Self::from(&ratio_int);
+
+        let ratio_limbs = ratio_value.allocate_limbs(
+            &mut cs.namespace(|| "allocate from ratio value")
+        )?;
+
+        let ratio = Self::pack_limbs(
+            &mut cs.namespace(|| "enforce bitwidths on ratio"),
+            ratio_limbs,
+            true,
+        )?;
+
+        Ok(ratio)
+    }
+
 }
 
