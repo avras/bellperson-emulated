@@ -1,4 +1,3 @@
-use std::ops::Div;
 use std::{marker::PhantomData, ops::Rem};
 
 use bellperson::{LinearCombination, SynthesisError, ConstraintSystem};
@@ -6,8 +5,7 @@ use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, Sign, BigUint};
 use num_traits::{Zero, One};
 
-use crate::util::{range_check_constant, range_check_lc, mul_lc_with_scalar, decompose, bigint_to_scalar};
-use crate::params::EmulatedFieldParams;
+use crate::util::{range_check_constant, range_check_lc, mul_lc_with_scalar};
 
 #[derive(Clone)]
 pub struct AllocatedLimbs<F: PrimeField + PrimeFieldBits> {
@@ -45,6 +43,14 @@ impl<F: PrimeField + PrimeFieldBits> Clone for EmulatedLimbs<F> {
             Self::Constant(c) => Self::Constant(c.clone()),
         }
     }
+}
+
+/// Emulated field is assumed to be prime. So inverses always
+/// exist for non-zero field elements
+pub trait EmulatedFieldParams {
+    fn num_limbs() -> usize;
+    fn bits_per_limb() -> usize;
+    fn modulus() -> BigInt;
 }
 
 pub struct EmulatedFieldElement<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> {
@@ -146,6 +152,22 @@ where
     F: PrimeField + PrimeFieldBits,
     P: EmulatedFieldParams,
 {
+    pub fn zero() -> EmulatedFieldElement<F, P> {
+        EmulatedFieldElement::<F, P>::from(&BigInt::from(0))
+    }
+
+    pub fn one() -> EmulatedFieldElement<F, P> {
+        EmulatedFieldElement::<F, P>::from(&BigInt::from(1))
+    }
+
+    pub fn modulus() -> EmulatedFieldElement<F, P> {
+        EmulatedFieldElement::<F, P>::from(&P::modulus())
+    }
+
+    pub fn max_overflow() -> usize {
+        F::CAPACITY as usize - P::bits_per_limb()
+    }
+
     pub fn new_internal_element(
         limbs: EmulatedLimbs<F>,
         overflow: usize,
@@ -266,7 +288,7 @@ where
 
     /// Enforces limb bit widths in a [EmulatedFieldElement] if it is not an
     /// internal element or a constant
-    pub fn enforce_width_conditional<CS>(
+    pub(crate) fn enforce_width_conditional<CS>(
         &self,
         cs: &mut CS,
     ) -> Result<bool, SynthesisError>
@@ -290,7 +312,7 @@ where
     /// specified by [EmulatedFieldParams].
     /// If `strict` is `true`, the most significant limb will be constrained to have
     /// width less than or equal to the most significant limb of the modulus.
-    fn pack_limbs<CS>(
+    pub(crate) fn pack_limbs<CS>(
         cs: &mut CS,
         limbs: EmulatedLimbs<F>,
         strict: bool,
@@ -347,134 +369,6 @@ where
         }
         // Should not reach this line
         return Err(SynthesisError::Unsatisfiable);
-    }
-
-    /// Computes the remainder modulo the field modulus
-    pub fn compute_rem<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<Self, SynthesisError>
-    where
-        CS: ConstraintSystem<F>,
-    {
-        let a_int: BigInt = self.into();
-        let p = P::modulus();
-        let r_int = a_int.rem(p);
-        let r_value = Self::from(&r_int);
-
-        let res_limbs = r_value.allocate_limbs(
-            &mut cs.namespace(|| "allocate from remainder value")
-        )?;
-
-        let res = Self::pack_limbs(
-            &mut cs.namespace(|| "enforce bitwidths on remainder"),
-            res_limbs,
-            true,
-        )?;
-        Ok(res)
-    }
-
-    /// Computes the remainder modulo the field modulus
-    pub fn compute_quotient<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<Self, SynthesisError>
-    where
-        CS: ConstraintSystem<F>,
-    {
-        // TODO: Check the need for the "+ 1"
-        let num_res_limbs = (self.len()*P::bits_per_limb() + self.overflow + 1
-            - (P::modulus().bits() as usize)    // Deduct the modulus bit size
-            + P::bits_per_limb() - 1) /         // This term is to round up to next integer
-            P::bits_per_limb();
-
-        let a_int: BigInt = self.into();
-        let p = P::modulus();
-        let k_int = a_int.div(p);
-        let k_int_limbs = decompose(&k_int, P::bits_per_limb(), num_res_limbs)?;
-
-        let res_limbs = k_int_limbs
-            .into_iter()
-            .map(|i| bigint_to_scalar(i))
-            .collect::<Vec<F>>()
-            .into();
-
-        let res = Self::pack_limbs(
-            &mut cs.namespace(|| "enforce bitwidths on quotient"),
-            res_limbs,
-            true,
-        )?;
-        Ok(res)
-    }
-
-    /// Computes the multiplicative inverse
-    pub fn compute_inverse<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<Self, SynthesisError>
-    where
-        CS: ConstraintSystem<F>,
-    {
-        let mut a_int: BigInt = self.into();
-        let p = P::modulus();
-        a_int = a_int.rem(&p);
-        if a_int.is_zero() {
-            eprintln!("Inverse of zero element cannot be calculated");
-            return Err(SynthesisError::DivisionByZero);
-        }
-        let p_minus_2 = &p - BigInt::from(2);
-        // a^(p-1) = 1 mod p for non-zero a. So a^(-1) = a^(p-2)
-        let a_inv_int = a_int.modpow(&p_minus_2, &p);
-        let a_inv_value = Self::from(&a_inv_int);
-
-        let a_inv_limbs = a_inv_value.allocate_limbs(
-            &mut cs.namespace(|| "allocate from inverse value")
-        )?;
-
-        let a_inv = Self::pack_limbs(
-            &mut cs.namespace(|| "enforce bitwidths on inverse"),
-            a_inv_limbs,
-            true,
-        )?;
-
-        Ok(a_inv)
-    }
-
-    /// Computes the ratio modulo the field modulus
-    pub fn compute_ratio<CS>(
-        &self,
-        cs: &mut CS,
-        other: &Self,
-    ) -> Result<Self, SynthesisError>
-    where
-        CS: ConstraintSystem<F>,
-    {
-        let numer_int: BigInt = self.into();
-        let mut denom_int: BigInt = other.into();
-        let p = P::modulus();
-        denom_int = denom_int.rem(&p);
-        if denom_int.is_zero() {
-            eprintln!("Inverse of zero element cannot be calculated");
-            return Err(SynthesisError::DivisionByZero);
-        }
-        let p_minus_2 = &p - BigInt::from(2);
-        // a^(p-1) = 1 mod p for non-zero a. So a^(-1) = a^(p-2)
-        let denom_inv_int = denom_int.modpow(&p_minus_2, &p);
-        let ratio_int = (numer_int * denom_inv_int).rem(&p);
-
-        let ratio_value = Self::from(&ratio_int);
-
-        let ratio_limbs = ratio_value.allocate_limbs(
-            &mut cs.namespace(|| "allocate from ratio value")
-        )?;
-
-        let ratio = Self::pack_limbs(
-            &mut cs.namespace(|| "enforce bitwidths on ratio"),
-            ratio_limbs,
-            true,
-        )?;
-
-        Ok(ratio)
     }
 
 }

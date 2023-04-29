@@ -4,9 +4,8 @@ use bellperson::{SynthesisError, ConstraintSystem, LinearCombination, gadgets::b
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 
-use crate::{element::{EmulatedFieldElement, EmulatedLimbs, AllocatedLimbs}, util::{recompose, decompose, mul_lc_with_scalar}};
-use crate::util::{bigint_to_scalar, Num};
-use crate::params::EmulatedFieldParams;
+use crate::field_element::{EmulatedFieldElement, EmulatedLimbs, AllocatedLimbs, EmulatedFieldParams};
+use crate::util::{recompose, decompose, mul_lc_with_scalar, bigint_to_scalar, Num};
 
 #[derive(Debug, Clone)]
 pub enum Optype {
@@ -33,23 +32,11 @@ impl Debug for OverflowError {
     }
 }
 
-pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> {
-    fn zero() -> EmulatedFieldElement<F, P> {
-        EmulatedFieldElement::<F, P>::from(&BigInt::from(0))
-    }
-
-    fn one() -> EmulatedFieldElement<F, P> {
-        EmulatedFieldElement::<F, P>::from(&BigInt::from(1))
-    }
-
-    fn modulus() -> EmulatedFieldElement<F, P> {
-        EmulatedFieldElement::<F, P>::from(&P::modulus())
-    }
-
-    fn max_overflow() -> usize {
-        F::CAPACITY as usize - P::bits_per_limb()
-    }
-
+impl<F, P> EmulatedFieldElement<F, P>
+where
+    F: PrimeField + PrimeFieldBits,
+    P: EmulatedFieldParams,
+{
     fn compact(
         a: &EmulatedFieldElement<F, P>,
         b: &EmulatedFieldElement<F, P>,
@@ -257,7 +244,7 @@ pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> 
         Ok(())
     }
 
-    fn reduce<CS>(
+    pub fn reduce<CS>(
         cs: &mut CS,
         x: &EmulatedFieldElement<F, P>,
     ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
@@ -352,7 +339,7 @@ pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> 
         Ok(EmulatedFieldElement::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
     
-    fn add<CS>(
+    pub fn add<CS>(
         cs: &mut CS,
         a: &EmulatedFieldElement<F, P>,
         b: &EmulatedFieldElement<F, P>,
@@ -485,7 +472,7 @@ pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> 
         Ok(EmulatedFieldElement::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
 
-    fn sub<CS>(
+    pub fn sub<CS>(
         cs: &mut CS,
         a: &EmulatedFieldElement<F, P>,
         b: &EmulatedFieldElement<F, P>,
@@ -609,7 +596,7 @@ pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> 
         Ok(EmulatedFieldElement::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
 
-    fn mul<CS>(
+    pub fn mul<CS>(
         cs: &mut CS,
         a: &EmulatedFieldElement<F, P>,
         b: &EmulatedFieldElement<F, P>,
@@ -625,7 +612,7 @@ pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> 
         )
     }
 
-    fn inverse<CS>(
+    pub fn inverse<CS>(
         cs: &mut CS,
         a: &EmulatedFieldElement<F, P>,
     ) -> Result<EmulatedFieldElement<F, P>, SynthesisError>
@@ -647,7 +634,7 @@ pub trait EmulatedField<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> 
         Ok(a_inv)
     }
 
-    fn divide<CS>(
+    pub fn divide<CS>(
         cs: &mut CS,
         numer: &EmulatedFieldElement<F, P>,
         denom: &EmulatedFieldElement<F, P>,
