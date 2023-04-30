@@ -61,7 +61,7 @@ where
 
         let res_limb_values: Vec<F> = k_int_limbs
             .into_iter()
-            .map(|i| bigint_to_scalar(i))
+            .map(|i| bigint_to_scalar(&i))
             .collect::<Vec<F>>();
 
         let res_limbs = EmulatedLimbs::<F>::allocate_limbs(

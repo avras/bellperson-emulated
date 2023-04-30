@@ -2,7 +2,8 @@ use std::ops::Rem;
 
 use bellperson::{LinearCombination, SynthesisError, ConstraintSystem, Variable, gadgets::boolean::Boolean};
 use ff::{PrimeField, PrimeFieldBits};
-use num_bigint::{BigInt, Sign};
+use num_bigint::BigInt;
+use num_traits::{Signed, One, Zero};
 
 /// Multiply a LinearCombination by a scalar
 pub fn mul_lc_with_scalar<F>(
@@ -115,21 +116,21 @@ where
 
 /// Convert a non-negative BigInt into a field element
 pub fn bigint_to_scalar<F>(
-    value: BigInt,
+    value: &BigInt,
 ) -> F
 where
     F: PrimeField + PrimeFieldBits,
 {
     assert!(value.bits() as u32 <= F::CAPACITY);
-    let (s, v) = value.into_parts();
-    assert_ne!(s, Sign::Minus);
+    assert!(!value.is_negative());
 
     let mut base = F::from(u64::MAX);
     base = base + F::one(); // 2^64 in the field
     let mut coeff = F::one();
     let mut res = F::zero();
 
-    for d in v.to_u64_digits().into_iter() {
+    let (_sign, digits) = value.to_u64_digits();
+    for d in digits.into_iter() {
         let d_f = F::from(d);
         res += d_f * coeff;
         coeff = coeff*base;
@@ -147,7 +148,7 @@ pub fn recompose(
         return Err(SynthesisError::Unsatisfiable);
     }
     
-    let mut res = BigInt::from(0);
+    let mut res = BigInt::zero();
     for i in 0..limbs.len() {
         res <<= num_bits_per_limb;
         res += &limbs[limbs.len()-i-1];
@@ -166,8 +167,8 @@ pub fn decompose(
         return Err(SynthesisError::Unsatisfiable);
     }
 
-    let mut res = vec![BigInt::from(0); num_limbs];
-    let base = BigInt::from(1) << num_bits_per_limb;
+    let mut res = vec![BigInt::zero(); num_limbs];
+    let base = BigInt::one() << num_bits_per_limb;
     let mut tmp = input.clone();
     for i in 0..num_limbs {
         res[i] = tmp.clone().rem(&base);

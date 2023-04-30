@@ -183,11 +183,11 @@ where
     P: EmulatedFieldParams,
 {
     pub fn zero() -> EmulatedFieldElement<F, P> {
-        EmulatedFieldElement::<F, P>::from(&BigInt::from(0))
+        EmulatedFieldElement::<F, P>::from(&BigInt::zero())
     }
 
     pub fn one() -> EmulatedFieldElement<F, P> {
-        EmulatedFieldElement::<F, P>::from(&BigInt::from(1))
+        EmulatedFieldElement::<F, P>::from(&BigInt::one())
     }
 
     pub fn modulus() -> EmulatedFieldElement<F, P> {
@@ -387,7 +387,7 @@ where
 
             let mut coeffs = vec![F::zero(); group_size];
             for i in 0..group_size {
-                coeffs[i] = bigint_to_scalar(BigInt::from(1) << P::bits_per_limb() * i);
+                coeffs[i] = bigint_to_scalar(&(BigInt::one() << P::bits_per_limb() * i));
             }
             
             let new_num_limbs = (P::num_limbs() + group_size - 1)/group_size;
@@ -438,9 +438,8 @@ mod tests {
     fn test_add() {
         let mut cs = TestConstraintSystem::<Fp>::new();
         let mut rng = rand::thread_rng();
-        let zero_int = BigInt::from(0);
-        let a_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
-        let b_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let a_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
         let sum_int = (&a_int + &b_int).rem(&Ed25519Fp::modulus());
 
         let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
@@ -480,9 +479,8 @@ mod tests {
     fn test_sub() {
         let mut cs = TestConstraintSystem::<Fp>::new();
         let mut rng = rand::thread_rng();
-        let zero_int = BigInt::from(0);
-        let tmp1 = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
-        let tmp2 = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let tmp1 = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+        let tmp2 = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
         let a_int = (&tmp1).max(&tmp2);
         let b_int = (&tmp1).min(&tmp2);
         let diff_int = (a_int - b_int).rem(&Ed25519Fp::modulus());
@@ -524,9 +522,8 @@ mod tests {
     fn test_mul() {
         let mut cs = TestConstraintSystem::<Fp>::new();
         let mut rng = rand::thread_rng();
-        let zero_int = BigInt::from(0);
-        let a_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
-        let b_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let a_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
         let prod_int = (&a_int * &b_int).rem(&Ed25519Fp::modulus());
 
         let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
@@ -566,10 +563,8 @@ mod tests {
     fn test_divide() {
         let mut cs = TestConstraintSystem::<Fp>::new();
         let mut rng = rand::thread_rng();
-        let zero_int = BigInt::from(0);
-        let one_int = BigInt::from(1);
-        let a_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
-        let b_int = rng.gen_bigint_range(&one_int, &Ed25519Fp::modulus());
+        let a_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&BigInt::one(), &Ed25519Fp::modulus());
         let p = Ed25519Fp::modulus();
         let p_minus_2 = &p - BigInt::from(2);
         // b^(p-1) = 1 mod p for non-zero b. So b^(-1) = b^(p-2)
@@ -624,8 +619,7 @@ mod tests {
     fn test_inverse() {
         let mut cs = TestConstraintSystem::<Fp>::new();
         let mut rng = rand::thread_rng();
-        let one_int = BigInt::from(1);
-        let b_int = rng.gen_bigint_range(&one_int, &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&BigInt::one(), &Ed25519Fp::modulus());
         let p = Ed25519Fp::modulus();
         let p_minus_2 = &p - BigInt::from(2);
         // b^(p-1) = 1 mod p for non-zero b. So b^(-1) = b^(p-2)

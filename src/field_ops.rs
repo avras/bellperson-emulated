@@ -3,6 +3,7 @@ use std::{ops::{Rem, Shl}, fmt::Debug};
 use bellperson::{SynthesisError, ConstraintSystem, LinearCombination, gadgets::boolean::{Boolean, AllocatedBit}};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
+use num_traits::One;
 
 use crate::field_element::{EmulatedFieldElement, EmulatedLimbs, AllocatedLimbs, EmulatedFieldParams};
 use crate::util::{recompose, decompose, mul_lc_with_scalar, bigint_to_scalar, Num};
@@ -79,8 +80,8 @@ where
     {
         if let (EmulatedLimbs::Allocated(a_l), EmulatedLimbs::Allocated(b_l)) = (a, b) {
             let num_limbs = a_l.limbs.len().max(b_l.limbs.len());
-            let max_value = bigint_to_scalar::<F>(BigInt::from(1).shl(num_bits_per_limb + num_carry_bits));
-            let max_value_shift = bigint_to_scalar::<F>(BigInt::from(1).shl(num_carry_bits));
+            let max_value = bigint_to_scalar::<F>(&BigInt::one().shl(num_bits_per_limb + num_carry_bits));
+            let max_value_shift = bigint_to_scalar::<F>(&BigInt::one().shl(num_carry_bits));
 
             let mut carry = Num::<F>::zero();
             for i in 0..num_limbs {
@@ -142,7 +143,7 @@ where
 
         let mut sum_higher_order_bits = Num::<F>::zero();
         let mut sum_shifted_bits = Num::<F>::zero();
-        let mut coeff = bigint_to_scalar::<F>(BigInt::from(1) << start_digit);
+        let mut coeff = bigint_to_scalar::<F>(&(BigInt::one() << start_digit));
         let mut coeff_shifted = F::one();
 
         for b in v_booleans {
@@ -378,7 +379,7 @@ where
         overflow: usize,
         limb_count: usize,
     ) -> Result<Vec<F>, SynthesisError> {
-        let tmp = BigInt::from(1) << overflow + P::bits_per_limb();
+        let tmp = BigInt::one() << overflow + P::bits_per_limb();
         let upper_bound_limbs = vec![tmp; limb_count];
 
         let p = P::modulus();
@@ -391,7 +392,7 @@ where
         let padding_limbs = upper_bound_limbs
             .into_iter()
             .zip(padding_delta.into_iter())
-            .map( |(a,b)| bigint_to_scalar(a+b))
+            .map( |(a,b)| bigint_to_scalar(&(a+b)))
             .collect::<Vec<F>>();
         
         Ok(padding_limbs)
