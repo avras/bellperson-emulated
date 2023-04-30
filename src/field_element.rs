@@ -476,4 +476,199 @@ mod tests {
         println!("Number of constraints = {:?}", cs.num_constraints());
     }
 
+    #[test]
+    fn test_sub() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let zero_int = BigInt::from(0);
+        let tmp1 = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let tmp2 = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let a_int = (&tmp1).max(&tmp2);
+        let b_int = (&tmp1).min(&tmp2);
+        let diff_int = (a_int - b_int).rem(&Ed25519Fp::modulus());
+
+        let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(a_int);
+        let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(b_int);
+        let diff_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&diff_int);
+
+        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
+        let diff = diff_const.allocate_field_element(&mut cs.namespace(|| "diff"));
+        assert!(a.is_ok());
+        assert!(b.is_ok());
+        assert!(diff.is_ok());
+        let a = a.unwrap();
+        let b = b.unwrap();
+        let diff = diff.unwrap();
+
+
+        let diff_calc = a.sub(&mut cs.namespace(|| "a - b"), &b);
+        assert!(diff_calc.is_ok());
+        let diff_calc = diff_calc.unwrap();
+
+        let res = EmulatedFieldElement::<Fp, Ed25519Fp>::assert_is_equal(
+            &mut cs.namespace(|| "check equality"),
+            &diff_calc,
+            &diff,
+        );
+        assert!(res.is_ok());
+
+        if !cs.is_satisfied() {
+            println!("{:?}", cs.which_is_unsatisfied());
+        }
+        assert!(cs.is_satisfied());
+        println!("Number of constraints = {:?}", cs.num_constraints());
+    }
+    
+    #[test]
+    fn test_mul() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let zero_int = BigInt::from(0);
+        let a_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let prod_int = (&a_int * &b_int).rem(&Ed25519Fp::modulus());
+
+        let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
+        let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
+        let prod_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&prod_int);
+
+        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
+        let prod = prod_const.allocate_field_element(&mut cs.namespace(|| "prod"));
+        assert!(a.is_ok());
+        assert!(b.is_ok());
+        assert!(prod.is_ok());
+        let a = a.unwrap();
+        let b = b.unwrap();
+        let prod = prod.unwrap();
+
+
+        let prod_calc = a.mul(&mut cs.namespace(|| "a * b"), &b);
+        assert!(prod_calc.is_ok());
+        let prod_calc = prod_calc.unwrap();
+
+        let res = EmulatedFieldElement::<Fp, Ed25519Fp>::assert_is_equal(
+            &mut cs.namespace(|| "check equality"),
+            &prod_calc,
+            &prod,
+        );
+        assert!(res.is_ok());
+
+        if !cs.is_satisfied() {
+            println!("{:?}", cs.which_is_unsatisfied());
+        }
+        assert!(cs.is_satisfied());
+        println!("Number of constraints = {:?}", cs.num_constraints());
+    }
+
+    #[test]
+    fn test_divide() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let zero_int = BigInt::from(0);
+        let one_int = BigInt::from(1);
+        let a_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&one_int, &Ed25519Fp::modulus());
+        let p = Ed25519Fp::modulus();
+        let p_minus_2 = &p - BigInt::from(2);
+        // b^(p-1) = 1 mod p for non-zero b. So b^(-1) = b^(p-2)
+        let b_inv_int = b_int.modpow(&p_minus_2, &p);
+        let ratio_int = (&a_int * b_inv_int).rem(&p);
+
+        let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
+        let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
+        let ratio_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&ratio_int);
+
+        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
+        let ratio = ratio_const.allocate_field_element(&mut cs.namespace(|| "ratio"));
+        assert!(a.is_ok());
+        assert!(b.is_ok());
+        assert!(ratio.is_ok());
+        let a = a.unwrap();
+        let b = b.unwrap();
+        let ratio = ratio.unwrap();
+
+
+        let ratio_calc = a.divide(&mut cs.namespace(|| "a divided by b"), &b);
+        assert!(ratio_calc.is_ok());
+        let ratio_calc = ratio_calc.unwrap();
+
+        let res = EmulatedFieldElement::<Fp, Ed25519Fp>::assert_is_equal(
+            &mut cs.namespace(|| "check equality"),
+            &ratio_calc,
+            &ratio,
+        );
+        assert!(res.is_ok());
+
+        let b_mul_ratio = b.mul(&mut cs.namespace(|| "b * (a div b)"), &ratio);
+        assert!(b_mul_ratio.is_ok());
+        let b_mul_ratio = b_mul_ratio.unwrap();
+
+        let res = EmulatedFieldElement::<Fp, Ed25519Fp>::assert_is_equal(
+            &mut cs.namespace(|| "check equality of a and b * (a div b)"),
+            &b_mul_ratio,
+            &a,
+        );
+        assert!(res.is_ok());
+
+        if !cs.is_satisfied() {
+            println!("{:?}", cs.which_is_unsatisfied());
+        }
+        assert!(cs.is_satisfied());
+        println!("Number of constraints = {:?}", cs.num_constraints());
+    }
+
+    #[test]
+    fn test_inverse() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let one_int = BigInt::from(1);
+        let b_int = rng.gen_bigint_range(&one_int, &Ed25519Fp::modulus());
+        let p = Ed25519Fp::modulus();
+        let p_minus_2 = &p - BigInt::from(2);
+        // b^(p-1) = 1 mod p for non-zero b. So b^(-1) = b^(p-2)
+        let b_inv_int = (&b_int).modpow(&p_minus_2, &p);
+
+        let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
+        let b_inv_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_inv_int);
+
+        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
+        let b_inv = b_inv_const.allocate_field_element(&mut cs.namespace(|| "b_inv"));
+        assert!(b.is_ok());
+        assert!(b_inv.is_ok());
+        let b = b.unwrap();
+        let b_inv = b_inv.unwrap();
+
+
+        let b_inv_calc = b.inverse(&mut cs.namespace(|| "b inverse"));
+        assert!(b_inv_calc.is_ok());
+        let b_inv_calc = b_inv_calc.unwrap();
+
+        let res = EmulatedFieldElement::<Fp, Ed25519Fp>::assert_is_equal(
+            &mut cs.namespace(|| "check equality"),
+            &b_inv_calc,
+            &b_inv,
+        );
+        assert!(res.is_ok());
+
+        let b_mul_b_inv = b.mul(&mut cs.namespace(|| "b * b_inv"), &b_inv);
+        assert!(b_mul_b_inv.is_ok());
+        let b_mul_b_inv = b_mul_b_inv.unwrap();
+
+        let res = EmulatedFieldElement::<Fp, Ed25519Fp>::assert_is_equal(
+            &mut cs.namespace(|| "check equality one and b * b_inv"),
+            &b_mul_b_inv,
+            &EmulatedFieldElement::<Fp, Ed25519Fp>::one(),
+        );
+        assert!(res.is_ok());
+
+        if !cs.is_satisfied() {
+            println!("{:?}", cs.which_is_unsatisfied());
+        }
+        assert!(cs.is_satisfied());
+        println!("Number of constraints = {:?}", cs.num_constraints());
+    }
+
 }
