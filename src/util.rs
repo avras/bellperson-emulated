@@ -162,7 +162,7 @@ pub fn decompose(
     num_limbs: usize,
 ) -> Result<Vec<BigInt>, SynthesisError> {
     if input.bits() as usize > num_limbs * num_bits_per_limb {
-        eprintln!("Not enough limbs to represent input");
+        eprintln!("Not enough limbs to represent input {:?}", input);
         return Err(SynthesisError::Unsatisfiable);
     }
 

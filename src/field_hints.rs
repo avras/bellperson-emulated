@@ -5,6 +5,7 @@ use ff::{PrimeFieldBits, PrimeField};
 use num_bigint::BigInt;
 use num_traits::Zero;
 
+use crate::field_element::EmulatedLimbs;
 use crate::{field_element::EmulatedFieldElement, field_element::EmulatedFieldParams};
 use crate::util::{decompose, bigint_to_scalar};
 
@@ -39,7 +40,7 @@ where
         Ok(res)
     }
 
-    /// Computes the remainder modulo the field modulus
+    /// Computes the quotient
     pub(crate) fn compute_quotient<CS>(
         &self,
         cs: &mut CS,
@@ -58,16 +59,20 @@ where
         let k_int = a_int.div(p);
         let k_int_limbs = decompose(&k_int, P::bits_per_limb(), num_res_limbs)?;
 
-        let res_limbs = k_int_limbs
+        let res_limb_values: Vec<F> = k_int_limbs
             .into_iter()
             .map(|i| bigint_to_scalar(i))
-            .collect::<Vec<F>>()
-            .into();
+            .collect::<Vec<F>>();
+
+        let res_limbs = EmulatedLimbs::<F>::allocate_limbs(
+            &mut cs.namespace(|| "allocate from quotient value"),
+            &res_limb_values,
+        )?;
 
         let res = Self::pack_limbs(
             &mut cs.namespace(|| "enforce bitwidths on quotient"),
             res_limbs,
-            true,
+            false,
         )?;
         Ok(res)
     }

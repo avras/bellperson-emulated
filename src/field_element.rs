@@ -45,6 +45,36 @@ impl<F: PrimeField + PrimeFieldBits> Clone for EmulatedLimbs<F> {
     }
 }
 
+impl<F> EmulatedLimbs<F>
+where
+    F: PrimeField + PrimeFieldBits
+{
+    pub(crate) fn allocate_limbs<CS>(
+        cs: &mut CS,
+        limb_values: &Vec<F>,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let mut lc_vec: Vec<LinearCombination<F>> = vec![];
+
+        for (i, v) in limb_values.into_iter().enumerate() {
+            let allocated_limb = cs.alloc(
+                || format!("allocating limb {i}"),
+                || Ok(*v),
+            )?;
+            lc_vec.push(LinearCombination::zero() + allocated_limb);
+        }
+        
+        let allocated_limbs = AllocatedLimbs {
+            limbs: lc_vec,
+            limb_values: Some(limb_values.clone()),
+        };
+        
+        Ok(EmulatedLimbs::Allocated(allocated_limbs))
+    }
+}
+
 /// Emulated field is assumed to be prime. So inverses always
 /// exist for non-zero field elements
 pub trait EmulatedFieldParams {
@@ -138,7 +168,7 @@ where
             EmulatedLimbs::Allocated(x) => x.limb_values.as_ref().unwrap(),
             EmulatedLimbs::Constant(x) => x,
         };
-        for i in 0..P::num_limbs() {
+        for i in 0..limbs.len() {
             res += base.clone() * BigUint::from_bytes_le(limbs[i].to_repr().as_ref());
             base = base * (one << P::bits_per_limb())
         }
@@ -206,22 +236,33 @@ where
         CS: ConstraintSystem<F>,
     {
         if let EmulatedLimbs::Constant(limb_values) = &self.limbs {
-            let mut lc_vec: Vec<LinearCombination<F>> = vec![];
+            EmulatedLimbs::<F>::allocate_limbs(
+                &mut cs.namespace(|| "allocate variables from constant limbs"),
+                limb_values
+            )
+        } else {
+            eprintln!("input must have constant limb values");
+            Err(SynthesisError::Unsatisfiable)
+        }
+    }
 
-            for (i, v) in limb_values.into_iter().enumerate() {
-                let allocated_limb = cs.alloc(
-                    || format!("allocating limb {i}"),
-                    || Ok(*v),
-                )?;
-                lc_vec.push(LinearCombination::zero() + allocated_limb);
-            }
-            
-            let allocated_limbs = AllocatedLimbs {
-                limbs: lc_vec,
-                limb_values: Some(limb_values.clone()),
-            };
-            
-            Ok(EmulatedLimbs::Allocated(allocated_limbs))
+    pub fn allocate_field_element<CS>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        if self.is_constant() {
+            let allocated_limbs = self.allocate_limbs(
+                &mut cs.namespace(|| "allocate variables from constant limbs"),
+            )?;
+            let allocated_field_element = Self::pack_limbs(
+                &mut cs.namespace(|| "check limb bitwidths"),
+                allocated_limbs,
+                true,
+            )?;
+            Ok(allocated_field_element)
         } else {
             eprintln!("input must have constant limb values");
             Err(SynthesisError::Unsatisfiable)
@@ -269,7 +310,7 @@ where
             
             let limb_values = allocated_limbs.limb_values.as_ref().unwrap();
             
-            for i in 0..P::num_limbs() {
+            for i in 0..allocated_limbs.limbs.len() {
                 let mut required_bit_width = P::bits_per_limb();
                 if modulus_width && i == P::num_limbs() - 1 {
                     required_bit_width = (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
@@ -345,8 +386,8 @@ where
             }
 
             let mut coeffs = vec![F::zero(); group_size];
+            let mut tmp = F::one();
             for i in 0..group_size {
-                let mut tmp = F::one();
                 coeffs[i] = tmp;
                 for _j in 0..P::bits_per_limb() {
                     tmp = tmp.double();
@@ -373,3 +414,70 @@ where
 
 }
 
+#[cfg(test)]
+mod tests {
+    use bellperson::gadgets::test::TestConstraintSystem;
+    use num_bigint::RandBigInt;
+
+    use super::*;
+    use pasta_curves::Fp;
+
+    struct Ed25519Fp;
+
+    impl EmulatedFieldParams for Ed25519Fp {
+        fn num_limbs() -> usize {
+            5
+        }
+
+        fn bits_per_limb() -> usize {
+            51
+        }
+
+        fn modulus() -> BigInt {
+            BigInt::parse_bytes(b"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed", 16).unwrap()
+        }
+    } 
+
+    #[test]
+    fn test_add() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let zero_int = BigInt::from(0);
+        let a_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&zero_int, &Ed25519Fp::modulus());
+        let sum_int = (&a_int + &b_int).rem(&Ed25519Fp::modulus());
+
+        let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
+        let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
+        let sum_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&sum_int);
+
+        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
+        let sum = sum_const.allocate_field_element(&mut cs.namespace(|| "sum"));
+        assert!(a.is_ok());
+        assert!(b.is_ok());
+        assert!(sum.is_ok());
+        let a = a.unwrap();
+        let b = b.unwrap();
+        let sum = sum.unwrap();
+
+
+        let sum_calc = a.add(&mut cs.namespace(|| "a + b"), &b);
+        assert!(sum_calc.is_ok());
+        let sum_calc = sum_calc.unwrap();
+
+        let res = EmulatedFieldElement::<Fp, Ed25519Fp>::assert_is_equal(
+            &mut cs.namespace(|| "check equality"),
+            &sum_calc,
+            &sum,
+        );
+        assert!(res.is_ok());
+
+        if !cs.is_satisfied() {
+            println!("{:?}", cs.which_is_unsatisfied());
+        }
+        assert!(cs.is_satisfied());
+        println!("Number of constraints = {:?}", cs.num_constraints());
+    }
+
+}

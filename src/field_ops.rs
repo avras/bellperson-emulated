@@ -100,7 +100,7 @@ where
                 }
                 
                 carry = Self::right_shift(
-                    &mut cs.namespace(|| format!("allocated carry {i}")),
+                    &mut cs.namespace(|| format!("right shift to get carry {i}")),
                     &Num::new(Some(diff_val), diff_lc),
                     num_bits_per_limb,
                     num_bits_per_limb + num_carry_bits + 1,
@@ -210,7 +210,7 @@ where
     }
 
     /// Asserts that the limbs represent the same integer value modulo the modulus.
-    fn assert_is_equal<CS>(
+    pub fn assert_is_equal<CS>(
         cs: &mut CS,
         a: &Self,
         b: &Self,
@@ -414,8 +414,8 @@ where
 
         let num_res_limbs = a.len().max(b.len());
         let mut res_lc: Vec<LinearCombination<F>> = vec![LinearCombination::<F>::zero(); num_res_limbs];
-        let mut res_values: Vec<F> = vec![F::zero(); num_res_limbs];
         let pad_limbs = Self::sub_padding(b.overflow, num_res_limbs)?;
+        let mut res_values: Vec<F> = pad_limbs.clone();
 
         match (a.limbs.clone(), b.limbs.clone()) {
             (EmulatedLimbs::Allocated(a_var), EmulatedLimbs::Constant(b_const)) => {
@@ -540,8 +540,8 @@ where
                 let var_limb_values = var_limbs.limb_values.clone().unwrap();
                 for i in 0..var_limbs.limbs.len() {
                     for j in 0..const_limbs.len() {
-                        prod_lc[i+j] = prod_lc[i+j].clone() + &mul_lc_with_scalar(&var_limbs.limbs[i], &const_limbs[i]);
-                        prod_values[i+j] = prod_values[i+j] + var_limb_values[i] * const_limbs[i];
+                        prod_lc[i+j] = prod_lc[i+j].clone() + &mul_lc_with_scalar(&var_limbs.limbs[i], &const_limbs[j]);
+                        prod_values[i+j] = prod_values[i+j] + var_limb_values[i] * const_limbs[j];
                     }
                 }
             },
@@ -550,7 +550,7 @@ where
                 let b_var_limb_values = b_var.limb_values.clone().unwrap();
                 for i in 0..a.len() {
                     for j in 0..b.len() {
-                        prod_values[i+j] += a_var_limb_values[i] * b_var_limb_values[i];
+                        prod_values[i+j] += a_var_limb_values[i] * b_var_limb_values[j];
                     }
                 }
 
@@ -712,8 +712,8 @@ where
 
         let res = match op_type {
             Optype::Add => Self::add_op::<CS>(&a_r, &b_r, next_overflow),
-            Optype::Sub => Self::sub_op::<CS>(&a_r,&b_r, next_overflow),
-            Optype::Mul => Self::mul_op(&mut cs.namespace(|| "mul_op"), &a_r,&b_r, next_overflow),
+            Optype::Sub => Self::sub_op::<CS>(&a_r, &b_r, next_overflow),
+            Optype::Mul => Self::mul_op(&mut cs.namespace(|| "mul_op"), &a_r, &b_r, next_overflow),
         };
 
         res
