@@ -5,7 +5,7 @@ use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, Sign, BigUint};
 use num_traits::{Zero, One};
 
-use crate::util::{range_check_constant, range_check_lc, mul_lc_with_scalar};
+use crate::util::{range_check_constant, range_check_lc, mul_lc_with_scalar, bigint_to_scalar};
 
 #[derive(Clone)]
 pub struct AllocatedLimbs<F: PrimeField + PrimeFieldBits> {
@@ -386,12 +386,8 @@ where
             }
 
             let mut coeffs = vec![F::zero(); group_size];
-            let mut tmp = F::one();
             for i in 0..group_size {
-                coeffs[i] = tmp;
-                for _j in 0..P::bits_per_limb() {
-                    tmp = tmp.double();
-                }
+                coeffs[i] = bigint_to_scalar(BigInt::from(1) << P::bits_per_limb() * i);
             }
             
             let new_num_limbs = (P::num_limbs() + group_size - 1)/group_size;
