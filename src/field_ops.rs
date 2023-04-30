@@ -142,8 +142,8 @@ where
 
         let mut sum_higher_order_bits = Num::<F>::zero();
         let mut sum_shifted_bits = Num::<F>::zero();
-        let mut coeff= bigint_to_scalar::<F>(BigInt::from(1) << start_digit);
-        let mut coeff_shifted  = F::one();
+        let mut coeff = bigint_to_scalar::<F>(BigInt::from(1) << start_digit);
+        let mut coeff_shifted = F::one();
 
         for b in v_booleans {
             sum_higher_order_bits = sum_higher_order_bits.add_bool_with_coeff(CS::one(), &b, coeff);
