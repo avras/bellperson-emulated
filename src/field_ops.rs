@@ -690,8 +690,9 @@ where
 
         let mut a_r: Self = a.clone();
         let mut b_r: Self = b.clone();
+        let mut loop_iteration = 0u32; // Used to prevent namespace collisions in below loop
         let next_overflow: usize = loop {
-            let res =  precondition(a, b);
+            let res =  precondition(&a_r, &b_r);
             if res.is_ok() {
                 let res_next_overflow = res.unwrap();                
                 break res_next_overflow;
@@ -699,16 +700,17 @@ where
             else {
                 let err = res.err().unwrap();
                 if err.reduce_right {
-                    a_r = a_r.reduce(
-                        &mut cs.namespace(|| "reduce a" ),
+                    b_r = b_r.reduce(
+                        &mut cs.namespace(|| format!("reduce b {loop_iteration}")),
                     )?;
                 }
                 else {
-                    b_r = b_r.reduce(
-                        &mut cs.namespace(|| "reduce b" ),
+                    a_r = a_r.reduce(
+                        &mut cs.namespace(|| format!("reduce a {loop_iteration}")),
                     )?;
                 }
             }
+            loop_iteration += 1;
         };
 
         let res = match op_type {
