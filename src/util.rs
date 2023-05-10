@@ -178,6 +178,8 @@ pub fn decompose(
 }
 
 /// Copy of bellman::gadgets::num to access the otherwise private fields.
+/// TODO: See if it can be removed. Neptune codebase uses Num without
+/// requiring access to private fields
 pub struct Num<F: PrimeField> {
     pub lc: LinearCombination<F>,
     pub value: Option<F>,
