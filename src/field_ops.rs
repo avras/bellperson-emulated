@@ -252,6 +252,14 @@ where
     where
         CS: ConstraintSystem<F>,
     {
+        if self.overflow + 2 > Self::max_overflow() {
+            panic!(
+                "Not enough bits in native field to accomodate a subtraction operation which is performed during reduce: {} > {}",
+                self.overflow + 2,
+                Self::max_overflow(),
+            );
+        }
+
         self.enforce_width_conditional(&mut cs.namespace(|| "ensure bitwidths in input"))?;
         if self.overflow == 0 {
             return Ok(self.clone());
@@ -504,6 +512,13 @@ where
         a: &Self,
         b: &Self,
     ) -> Result<usize, OverflowError> {
+        if 2*P::bits_per_limb() > F::CAPACITY as usize {
+            panic!(
+                "Not enough bits in native field to accomodate a product of limbs: {} < {}",
+                F::CAPACITY,
+                2*P::bits_per_limb(),
+            );
+        }
         let reduce_right = a.overflow < b.overflow;
         let max_carry_bits = (a.len().min(b.len()) as f32).log2().ceil() as usize;
         let next_overflow = P::bits_per_limb() + a.overflow + b.overflow + max_carry_bits;
