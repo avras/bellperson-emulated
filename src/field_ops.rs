@@ -1,4 +1,4 @@
-use std::{ops::{Rem, Shl}, fmt::Debug};
+use std::{ops::{Rem, Shl}, fmt::Debug, marker::PhantomData};
 
 use bellperson::{SynthesisError, ConstraintSystem, LinearCombination, gadgets::boolean::{Boolean, AllocatedBit}};
 use ff::{PrimeField, PrimeFieldBits};
@@ -616,12 +616,62 @@ where
     where
         CS: ConstraintSystem<F>,
     {
+        let mut prod = 
         Self::reduce_and_apply_op(
             &mut cs.namespace(|| "compute a * b"),
             Optype::Mul,
             self,
             other,
-        )
+        )?;
+        prod.fold_limbs(&mut cs.namespace(|| "fold limbs of product"))?;
+        Ok(prod)
+    }
+
+    pub fn mul_const<CS>(
+        &self,
+        cs: &mut CS,
+        constant: &BigInt,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        if constant.bits() as usize > Self::max_overflow() {
+            eprintln!("constant and limb product will overflow native limb capacity even after reduction");
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let mut next_overflow: usize = constant.bits() as usize + self.overflow;
+
+        let elem = if next_overflow > Self::max_overflow() {
+            next_overflow = constant.bits() as usize;
+            self.reduce(
+                &mut cs.namespace(|| format!("reduce element to accommodate mul with const")),
+            )?
+        } else {
+            self.clone()
+        };
+
+        let mut prod_lc: Vec<LinearCombination<F>> = vec![];
+        let mut prod_values: Vec<F> = vec![];
+        let constant_scalar = bigint_to_scalar(constant);
+
+        match elem.limbs {
+            EmulatedLimbs::Allocated(var) => {
+                let var_limb_values = var.limb_values.clone().unwrap();
+
+                for i in 0..var.limbs.len() {
+                    prod_lc.push(mul_lc_with_scalar(&var.limbs[i], &constant_scalar));
+                    prod_values.push(var_limb_values[i] * constant_scalar);
+                }
+            },
+            EmulatedLimbs::Constant(_) => panic!("mul_const not implemented for element with constant limbs"),
+        }
+
+        let res = AllocatedLimbs::<F> {
+            limbs: prod_lc,
+            limb_values: Some(prod_values),
+        };
+        
+        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
 
     pub fn inverse<CS>(
@@ -668,6 +718,87 @@ where
         )?;
 
         Ok(ratio)
+    }
+
+    pub fn fold_limbs<CS>(
+        &mut self,
+        cs: &mut CS
+    ) -> Result<(), SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        // No folding algorithm for non-pseudo Mersenne primes; this method becomes a no-op
+        if !P::is_modulus_pseudo_mersenne() {
+            return Ok(());
+        }
+
+        if self.is_constant() {
+            eprintln!("fold_limbs not implemented for constants");
+            return Err(SynthesisError::Unsatisfiable);
+        }
+
+        // No extra limbs to fold
+        if self.len() <= P::num_limbs() {
+            return Ok(());
+        }
+
+        let num_chunks = (self.len() + P::num_limbs() - 1) / P::num_limbs();
+        let mut chunks: Vec<EmulatedFieldElement<F, P>> = vec![];
+
+        match &self.limbs {
+            EmulatedLimbs::Allocated(var) => {
+                let var_limb_values = var.limb_values.clone().unwrap();
+
+                for i in 0..num_chunks {
+                    let mut part_lcs = vec![];
+                    let mut part_values = vec![];
+                    for j in 0..P::num_limbs() {
+                        if i*P::num_limbs() + j < self.len() {
+                            part_lcs.push(var.limbs[i*P::num_limbs() + j].clone());
+                            part_values.push(var_limb_values[i*P::num_limbs() + j]);
+                        } 
+                    }
+
+                    let res = AllocatedLimbs::<F> {
+                        limbs: part_lcs,
+                        limb_values: Some(part_values),
+                    };
+                    
+                    let chunk = Self {
+                        limbs: EmulatedLimbs::Allocated(res),
+                        overflow: self.overflow,
+                        internal: self.internal,
+                        marker: PhantomData,
+                    };
+                    chunks.push(chunk);
+                }
+            },
+            EmulatedLimbs::Constant(_) => panic!("Constant input already handled with a return. Execution should not reach here"),
+        }
+
+        let pseudo_mersenne_params = P::pseudo_mersenne_params().unwrap();
+        if P::num_limbs() * P::bits_per_limb() < pseudo_mersenne_params.e as usize {
+            panic!("The number of bits available is too small to accommodate the non-native field elements");
+        }
+
+        let mut acc = chunks[0].clone();
+
+        for i in 1..num_chunks {
+            let bitwidth = (i*P::num_limbs()*P::bits_per_limb()) as u32;
+            let q = bitwidth / pseudo_mersenne_params.e;
+            let r = bitwidth % pseudo_mersenne_params.e;
+            let mut scale = pseudo_mersenne_params.c.pow(q);
+            scale = scale * (BigInt::one() << r);
+            let scaled_chunk = chunks[i].mul_const(
+                &mut cs.namespace(|| format!("multiplying chunk {i} with {scale}")),
+                &scale,
+            )?;
+            acc = acc.add(&mut cs.namespace(|| format!("adding chunk {i}-1 and chunk {i}")), &scaled_chunk)?;
+        }
+
+        *self = acc;
+
+        Ok(())
     }
 
     fn reduce_and_apply_op<CS>(

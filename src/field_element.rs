@@ -2,10 +2,10 @@ use std::{marker::PhantomData, ops::Rem};
 
 use bellperson::{LinearCombination, SynthesisError, ConstraintSystem};
 use ff::{PrimeField, PrimeFieldBits};
-use num_bigint::{BigInt, Sign, BigUint};
-use num_traits::{Zero, One};
+use num_bigint::{BigInt, BigUint};
+use num_traits::{Zero, One, Signed};
 
-use crate::util::{range_check_constant, range_check_lc, mul_lc_with_scalar, bigint_to_scalar};
+use crate::util::*;
 
 #[derive(Clone)]
 pub struct AllocatedLimbs<F: PrimeField + PrimeFieldBits> {
@@ -75,19 +75,33 @@ where
     }
 }
 
+/// Parameters of a prime of the form `2^e-c`
+pub struct PseudoMersennePrime {
+    pub e: u32,
+    pub c: BigInt,
+}
+
 /// Emulated field is assumed to be prime. So inverses always
 /// exist for non-zero field elements
 pub trait EmulatedFieldParams {
     fn num_limbs() -> usize;
     fn bits_per_limb() -> usize;
     fn modulus() -> BigInt;
+    
+    fn is_modulus_pseudo_mersenne() -> bool {
+        false
+    }
+    
+    fn pseudo_mersenne_params() -> Option<PseudoMersennePrime> {
+        None
+    }
 }
 
 pub struct EmulatedFieldElement<F: PrimeField + PrimeFieldBits, P: EmulatedFieldParams> {
     pub(crate) limbs: EmulatedLimbs<F>,
     pub(crate) overflow: usize,
     pub(crate) internal: bool,
-    marker: PhantomData<P>,
+    pub(crate) marker: PhantomData<P>,
 }
 
 impl<F, P> Clone for EmulatedFieldElement<F, P>
@@ -117,7 +131,7 @@ where
     /// reduced.
     fn from(value: &BigInt) -> Self {
         let mut v = value.clone();
-        assert!(v.sign() != Sign::Minus);
+        assert!(!v.is_negative());
 
         if v > P::modulus() {
             v = v.rem(P::modulus());
@@ -275,6 +289,10 @@ where
     /// specified by [EmulatedFieldParams].
     /// If `modulus_width` is `true`, the most significant limb will be constrained to have
     /// width less than or equal to the most significant limb of the modulus.
+    /// For constant elements, the number of limbs is required to be equal to P::num_limbs().
+    /// For allocated elements, the number of limbs is required to be equal to P::num_limbs()
+    /// only if `modulus_width` is true. In the calculation of quotients, the limbs may not
+    /// be equal to P::num_limbs()
     fn enforce_width<CS>(
         &self,
         cs: &mut CS,
@@ -329,6 +347,10 @@ where
 
     /// Enforces limb bit widths in a [EmulatedFieldElement] if it is not an
     /// internal element or a constant
+    /// 
+    /// The number of limbs is required to be equal to P::num_limbs(), and
+    /// the most significant limb will be constrained to have
+    /// width less than or equal to the most significant limb of the modulus.
     pub(crate) fn enforce_width_conditional<CS>(
         &self,
         cs: &mut CS,
@@ -431,6 +453,14 @@ mod tests {
 
         fn modulus() -> BigInt {
             BigInt::parse_bytes(b"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed", 16).unwrap()
+        }
+
+        fn is_modulus_pseudo_mersenne() -> bool {
+            false
+        }
+
+        fn pseudo_mersenne_params() -> Option<PseudoMersennePrime> {
+            None
         }
     } 
 
