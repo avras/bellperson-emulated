@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, ops::Rem};
 
-use bellperson::{LinearCombination, SynthesisError, ConstraintSystem};
+use bellperson::{LinearCombination, SynthesisError, ConstraintSystem, gadgets::boolean::AllocatedBit};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{Zero, One, Signed};
@@ -430,6 +430,111 @@ where
         return Err(SynthesisError::Unsatisfiable);
     }
 
+    pub fn check_field_membership<CS>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<(), SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        if self.is_constant() {
+            if BigInt::from(self) < P::modulus() {
+                return Ok(());
+            }
+            else {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+        }
+
+        if self.len() != P::num_limbs() {
+            eprintln!("Field membership check only implemented for limb count equal to default");
+            return Err(SynthesisError::Unsatisfiable);
+        }
+
+        match &self.limbs {
+            EmulatedLimbs::Allocated(var) => {
+                let var_limb_values = var.limb_values.clone().unwrap();
+                // Number of modulus bits in most significant limb
+                let num_mod_bits_in_msl = P::modulus().bits() as usize - (P::num_limbs()-1)*P::bits_per_limb();
+
+                for i in 0..P::num_limbs() {
+                    let num_bits = if i == P::num_limbs() - 1 {
+                        num_mod_bits_in_msl
+                    } else {
+                        P::bits_per_limb()
+                    };
+
+                    range_check_lc(
+                        &mut cs.namespace(|| format!("range check limb {i}")),
+                        &var.limbs[i],
+                        var_limb_values[i],
+                        num_bits,
+                    )?;
+                }
+
+                if P::is_modulus_pseudo_mersenne() {
+                    let pseudo_mersenne_params = P::pseudo_mersenne_params().unwrap();
+                    // Maximum value of most significant limb
+                    let max_msl_value = (BigInt::one() << num_mod_bits_in_msl)- BigInt::one();
+                    // Maximum value of least significant limbs
+                    let max_lsl_value = (BigInt::one() << P::bits_per_limb()) - BigInt::one();
+
+                    let equality_bits: Vec<AllocatedBit> = (1..P::num_limbs())
+                        .map( |i| {
+                            let max_limb_value = if i == P::num_limbs() - 1 {
+                                bigint_to_scalar(&max_msl_value)
+                            } else {
+                                bigint_to_scalar(&max_lsl_value)
+                            };
+            
+                            let bit = alloc_lc_equals_constant(
+                                cs.namespace(|| format!("limb {i} equals max value")),
+                                &var.limbs[i],
+                                var_limb_values[i],
+                                max_limb_value,
+                            );
+                            bit.unwrap()
+                        })
+                        .collect();
+
+                    let mut kary_and = equality_bits[0].clone();
+                    for i in 1..P::num_limbs()-1 {
+                        kary_and = AllocatedBit::and(
+                            cs.namespace(|| format!("and of bits {} and {}", i-1, i)),
+                            &kary_and,
+                            &equality_bits[i],
+                        )?
+                    }
+
+                    let c = bigint_to_scalar(&pseudo_mersenne_params.c);
+
+                    // Least significant limb increased by c if all the most significant limbs are maxxed out
+                    // If kary_and is true, then lsl_lc = var.limbs[0] + c. Otherwise, lsl_lc = var.limbs[0].
+                    // The latter is already within P::bits_per_limb(). If the former only has P::bits_per_limb(),
+                    // then var.limbs[0] is at most 2^(P::bits_per_limb())-1-c
+                    let lsl_lc = var.limbs[0].clone() + (c, kary_and.get_variable());
+                    let lsl_lc_value = if kary_and.get_value().unwrap() {
+                        var_limb_values[0] + c
+                    } else {
+                        var_limb_values[0]
+                    };
+                    range_check_lc(
+                        &mut cs.namespace(|| format!("range check limb least significant limb + possibly c")),
+                        &lsl_lc,
+                        lsl_lc_value,
+                        P::bits_per_limb(),
+                    )?;
+
+                } else {
+                    panic!("Check field membership implemented only for pseudo-Mersenne prime moduli");
+                }
+            },
+            EmulatedLimbs::Constant(_) => panic!("constant case is already handled; this code should be unreachable"),
+        }
+
+        Ok(())
+    }
+
 }
 
 #[cfg(test)]
@@ -456,11 +561,14 @@ mod tests {
         }
 
         fn is_modulus_pseudo_mersenne() -> bool {
-            false
+            true
         }
 
         fn pseudo_mersenne_params() -> Option<PseudoMersennePrime> {
-            None
+            Some(PseudoMersennePrime {
+                e: 255,
+                c: BigInt::from(19),
+            })
         }
     } 
 
@@ -693,6 +801,54 @@ mod tests {
         }
         assert!(cs.is_satisfied());
         println!("Number of constraints = {:?}", cs.num_constraints());
+    }
+
+    #[test]
+    fn test_field_membership() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let q_int = (BigInt::one() << 255) - BigInt::from(19);
+        let mut rng = rand::thread_rng();
+
+        let a_int = rng.gen_bigint_range(&BigInt::zero(), &q_int);
+        let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
+        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
+        println!("Num constraints before field membership check = {:?}", cs.num_constraints());
+        assert!(a.is_ok());
+        let a = a.unwrap();
+
+        let res = a.check_field_membership(
+            &mut cs.namespace(|| "check field membership of random a"),
+        );
+        assert!(res.is_ok());
+
+        assert!(cs.is_satisfied());
+        println!("Num constraints after field membership check = {:?}", cs.num_constraints());
+
+        let b_int = &q_int - BigInt::one();
+        let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
+        let b = b_const.allocate_field_element(&mut cs.namespace(|| "q-1"));
+        assert!(b.is_ok());
+        let b = b.unwrap();
+
+        let res = b.check_field_membership(
+            &mut cs.namespace(|| "check field membership of q-1"),
+        );
+        assert!(res.is_ok());
+
+        assert!(cs.is_satisfied());
+
+        let one = EmulatedFieldElement::<Fp, Ed25519Fp>::one();
+        let q = b.add(&mut cs.namespace(|| "add 1 to q-1"), &one);
+        assert!(q.is_ok());
+        let q = q.unwrap();
+
+        let res = q.check_field_membership(
+            &mut cs.namespace(|| "check field non-membership of q"),
+        );
+        assert!(res.is_ok());
+
+        assert!(!cs.is_satisfied());
+
     }
 
 }

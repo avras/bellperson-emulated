@@ -1,6 +1,7 @@
 use std::ops::Rem;
 
-use bellperson::{LinearCombination, SynthesisError, ConstraintSystem, Variable, gadgets::boolean::Boolean};
+use bellperson::{LinearCombination, SynthesisError, ConstraintSystem, Variable};
+use bellperson::gadgets::{boolean::{Boolean, AllocatedBit}, num::AllocatedNum};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 use num_traits::{Signed, One, Zero};
@@ -87,6 +88,44 @@ where
     );
 
     Ok(())
+}
+
+/// Check that a linear combination equals a constant and return a bit
+/// 
+/// Based on `alloc_num_equals` in `Nova/src/gadgets/utils.rs`
+pub fn alloc_lc_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
+    mut cs: CS,
+    a: &LinearCombination<F>,
+    a_value: F,
+    b: F,
+) -> Result<AllocatedBit, SynthesisError> {
+    // Allocate and constrain `r`: result boolean bit.
+    // It equals `true` if `a` equals `b`, `false` otherwise
+    let r = AllocatedBit::alloc(cs.namespace(|| "r"), Some(a_value == b))?;
+  
+    // Allocate t s.t. t=1 if a == b else 1/(a - b)
+    let t_value = if a_value == b {
+        F::one()
+    } else {
+        (a_value - b).invert().unwrap()
+    };
+    let t = AllocatedNum::alloc(cs.namespace(|| "t"), || Ok(t_value))?;
+  
+    cs.enforce(
+        || "t*(a - b) = 1 - r",
+        |lc| lc + t.get_variable(),
+        |lc| lc + a - &LinearCombination::from_coeff(CS::one(), b),
+        |lc| lc + CS::one() - r.get_variable(),
+    );
+  
+    cs.enforce(
+        || "r*(a - b) = 0",
+        |lc| lc + r.get_variable(),
+        |lc| lc + a - &LinearCombination::from_coeff(CS::one(), b),
+        |lc| lc,
+    );
+  
+    Ok(r)
 }
 
 /// Range check a constant field element
