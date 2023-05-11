@@ -260,7 +260,14 @@ where
         }
     }
 
-    pub fn allocate_field_element<CS>(
+    /// Allocates an emulated field element from constant limbs **without**
+    /// in-circuit checks for field membership. If you want to enforce membership
+    /// in the field, you can call `check_field_membership` on the output of this
+    /// method.
+    /// 
+    /// This method is suitable for allocating field elements from public inputs
+    /// that are known to be in the field.
+    pub fn allocate_field_element_unchecked<CS>(
         &self,
         cs: &mut CS,
     ) -> Result<Self, SynthesisError>
@@ -268,14 +275,14 @@ where
         CS: ConstraintSystem<F>,
     {
         if self.is_constant() {
+            // Below statement does not perform a in-circuit check as the input is a constant
+            self.check_field_membership(&mut cs.namespace(|| "check field membership of constant input"))?;
+
             let allocated_limbs = self.allocate_limbs(
                 &mut cs.namespace(|| "allocate variables from constant limbs"),
             )?;
-            let allocated_field_element = Self::pack_limbs(
-                &mut cs.namespace(|| "check limb bitwidths"),
-                allocated_limbs,
-                true,
-            )?;
+
+            let allocated_field_element = Self::new_internal_element(allocated_limbs, 0);
             Ok(allocated_field_element)
         } else {
             eprintln!("input must have constant limb values");
@@ -584,9 +591,9 @@ mod tests {
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
         let sum_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&sum_int);
 
-        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
-        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
-        let sum = sum_const.allocate_field_element(&mut cs.namespace(|| "sum"));
+        let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b"));
+        let sum = sum_const.allocate_field_element_unchecked(&mut cs.namespace(|| "sum"));
         assert!(a.is_ok());
         assert!(b.is_ok());
         assert!(sum.is_ok());
@@ -627,9 +634,9 @@ mod tests {
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(b_int);
         let diff_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&diff_int);
 
-        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
-        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
-        let diff = diff_const.allocate_field_element(&mut cs.namespace(|| "diff"));
+        let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b"));
+        let diff = diff_const.allocate_field_element_unchecked(&mut cs.namespace(|| "diff"));
         assert!(a.is_ok());
         assert!(b.is_ok());
         assert!(diff.is_ok());
@@ -668,9 +675,9 @@ mod tests {
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
         let prod_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&prod_int);
 
-        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
-        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
-        let prod = prod_const.allocate_field_element(&mut cs.namespace(|| "prod"));
+        let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b"));
+        let prod = prod_const.allocate_field_element_unchecked(&mut cs.namespace(|| "prod"));
         assert!(a.is_ok());
         assert!(b.is_ok());
         assert!(prod.is_ok());
@@ -713,9 +720,9 @@ mod tests {
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
         let ratio_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&ratio_int);
 
-        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
-        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
-        let ratio = ratio_const.allocate_field_element(&mut cs.namespace(|| "ratio"));
+        let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b"));
+        let ratio = ratio_const.allocate_field_element_unchecked(&mut cs.namespace(|| "ratio"));
         assert!(a.is_ok());
         assert!(b.is_ok());
         assert!(ratio.is_ok());
@@ -766,8 +773,8 @@ mod tests {
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
         let b_inv_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_inv_int);
 
-        let b = b_const.allocate_field_element(&mut cs.namespace(|| "b"));
-        let b_inv = b_inv_const.allocate_field_element(&mut cs.namespace(|| "b_inv"));
+        let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b"));
+        let b_inv = b_inv_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b_inv"));
         assert!(b.is_ok());
         assert!(b_inv.is_ok());
         let b = b.unwrap();
@@ -811,7 +818,7 @@ mod tests {
 
         let a_int = rng.gen_bigint_range(&BigInt::zero(), &q_int);
         let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
-        let a = a_const.allocate_field_element(&mut cs.namespace(|| "a"));
+        let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
         println!("Num constraints before field membership check = {:?}", cs.num_constraints());
         assert!(a.is_ok());
         let a = a.unwrap();
@@ -826,7 +833,7 @@ mod tests {
 
         let b_int = &q_int - BigInt::one();
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
-        let b = b_const.allocate_field_element(&mut cs.namespace(|| "q-1"));
+        let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "q-1"));
         assert!(b.is_ok());
         let b = b.unwrap();
 
