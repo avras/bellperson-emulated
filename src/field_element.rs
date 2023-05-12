@@ -438,7 +438,7 @@ where
         match &self.limbs {
             EmulatedLimbs::Allocated(allocated_limbs) => {
                 // Number of modulus bits in most significant limb
-                let num_mod_bits_in_msl = P::modulus().bits() as usize - (P::num_limbs()-1)*P::bits_per_limb();
+                let num_mod_bits_in_msl = (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
 
                 for i in 0..P::num_limbs() {
                     let num_bits = if i == P::num_limbs() - 1 {
