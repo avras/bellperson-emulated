@@ -1,19 +1,20 @@
 use std::{ops::{Rem, Shl}, fmt::Debug, marker::PhantomData};
 
-use bellperson::{SynthesisError, ConstraintSystem, LinearCombination, gadgets::boolean::{Boolean, AllocatedBit}};
+use bellperson::{SynthesisError, ConstraintSystem, LinearCombination, gadgets::num::AllocatedNum};
+use bellperson::gadgets::boolean::{Boolean, AllocatedBit};
+use bellperson::gadgets::num::Num;
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 use num_traits::One;
 
-use crate::field_element::{EmulatedFieldElement, EmulatedLimbs, AllocatedLimbs, EmulatedFieldParams};
-use crate::util::{recompose, decompose, mul_lc_with_scalar, bigint_to_scalar, Num};
+use crate::field_element::{EmulatedFieldElement, EmulatedLimbs, EmulatedFieldParams};
+use crate::util::{recompose, decompose, bigint_to_scalar};
 
 #[derive(Debug, Clone)]
 pub enum Optype {
     Add,
     Sub,
     Mul,
-    // MulConstant,
 }
 
 #[derive(Clone)]
@@ -79,30 +80,28 @@ where
         CS: ConstraintSystem<F>,
     {
         if let (EmulatedLimbs::Allocated(a_l), EmulatedLimbs::Allocated(b_l)) = (a, b) {
-            let num_limbs = a_l.limbs.len().max(b_l.limbs.len());
+            let num_limbs = a_l.len().max(b_l.len());
             let max_value = bigint_to_scalar::<F>(&BigInt::one().shl(num_bits_per_limb + num_carry_bits));
             let max_value_shift = bigint_to_scalar::<F>(&BigInt::one().shl(num_carry_bits));
 
             let mut carry = Num::<F>::zero();
             for i in 0..num_limbs {
-                let mut diff_lc = carry.lc(F::one()) + &LinearCombination::from_coeff(CS::one(), max_value);
-                let mut diff_val = carry.get_value().unwrap() + max_value;
-                if i < a_l.limbs.len() {
-                    diff_lc = diff_lc + &a_l.limbs[i];
-                    diff_val = diff_val + a_l.limb_values.as_ref().unwrap()[i];
+                let mut diff_num = carry.add(&Num::<F>::zero().add_bool_with_coeff(CS::one(), &Boolean::Constant(true), max_value));
+                if i < a_l.len() {
+                    diff_num = diff_num.add(&a_l[i]);
                 }
-                if i < b_l.limbs.len() {
-                    diff_lc = diff_lc - &b_l.limbs[i];
-                    diff_val = diff_val - b_l.limb_values.as_ref().unwrap()[i];
+                if i < b_l.len() {
+                    let mut neg_bl = b_l[i].clone();
+                    neg_bl = neg_bl.scale(-F::one());
+                    diff_num = diff_num.add(&neg_bl);
                 }
                 if i > 0 {
-                    diff_lc = diff_lc - &LinearCombination::from_coeff(CS::one(), max_value_shift);
-                    diff_val = diff_val - max_value_shift;
+                    diff_num = diff_num.add_bool_with_coeff(CS::one(), &Boolean::Constant(true), -max_value_shift);
                 }
-                
+
                 carry = Self::right_shift(
                     &mut cs.namespace(|| format!("right shift to get carry {i}")),
-                    &Num::new(Some(diff_val), diff_lc),
+                    &diff_num,
                     num_bits_per_limb,
                     num_bits_per_limb + num_carry_bits + 1,
                 )?;
@@ -305,46 +304,33 @@ where
         }
 
         let num_res_limbs = a.len().max(b.len());
-        let mut res_lc: Vec<LinearCombination<F>> = vec![LinearCombination::<F>::zero(); num_res_limbs];
-        let mut res_values: Vec<F> = vec![F::zero(); num_res_limbs];
+        let mut res: Vec<Num<F>> = vec![Num::<F>::zero(); num_res_limbs];
 
         match (a.limbs.clone(), b.limbs.clone()) {
             (EmulatedLimbs::Constant(const_limbs), EmulatedLimbs::Allocated(var_limbs)) |
             (EmulatedLimbs::Allocated(var_limbs), EmulatedLimbs::Constant(const_limbs)) => {
-                let var_limb_values = var_limbs.limb_values.clone().unwrap();
                 for i in 0..num_res_limbs {
-                    if i < var_limbs.limbs.len() {
-                        res_lc[i] = res_lc[i].clone() + &var_limbs.limbs[i];
-                        res_values[i] = res_values[i] + var_limb_values[i];
+                    if i < var_limbs.len() {
+                        res[i] = var_limbs[i].clone();
                     }
                     if i < const_limbs.len() {
-                        res_lc[i] = res_lc[i].clone() + &LinearCombination::from_coeff(CS::one(), const_limbs[i]);
-                        res_values[i] = res_values[i] + const_limbs[i];
+                        res[i] = res[i].clone().add_bool_with_coeff(CS::one(), &Boolean::Constant(true), const_limbs[i]);
                     }
                 }
             },
             (EmulatedLimbs::Allocated(a_var), EmulatedLimbs::Allocated(b_var)) => {
-                let a_var_limb_values = a_var.limb_values.clone().unwrap();
-                let b_var_limb_values = b_var.limb_values.clone().unwrap();
                 for i in 0..num_res_limbs {
-                    if i < a_var.limbs.len() {
-                        res_lc[i] = res_lc[i].clone() + &a_var.limbs[i];
-                        res_values[i] = res_values[i] + a_var_limb_values[i];
+                    if i < a_var.len() {
+                        res[i] = a_var[i].clone();
                     }
-                    if i < b_var.limbs.len() {
-                        res_lc[i] = res_lc[i].clone() + &b_var.limbs[i];
-                        res_values[i] = res_values[i] + b_var_limb_values[i];
+                    if i < b_var.len() {
+                        res[i] = res[i].clone().add(&b_var[i]);
                     }
                 }
             },
             (EmulatedLimbs::Constant(_), EmulatedLimbs::Constant(_)) => panic!("Constant limb case has already been handled"),
         }
 
-        let res = AllocatedLimbs::<F> {
-            limbs: res_lc,
-            limb_values: Some(res_values),
-        };
-        
         Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
     
@@ -422,62 +408,50 @@ where
         }
 
         let num_res_limbs = a.len().max(b.len());
-        let mut res_lc: Vec<LinearCombination<F>> = vec![LinearCombination::<F>::zero(); num_res_limbs];
+        let mut res: Vec<Num<F>> = vec![];
         let pad_limbs = Self::sub_padding(b.overflow, num_res_limbs)?;
-        let mut res_values: Vec<F> = pad_limbs.clone();
+        for i in 0..num_res_limbs {
+            res.push(Num::<F>::zero().add_bool_with_coeff(CS::one(), &Boolean::Constant(true), pad_limbs[i]));
+        }
 
         match (a.limbs.clone(), b.limbs.clone()) {
             (EmulatedLimbs::Allocated(a_var), EmulatedLimbs::Constant(b_const)) => {
-                let a_var_limb_values = a_var.limb_values.clone().unwrap();
                 for i in 0..num_res_limbs {
-                    res_lc[i] = LinearCombination::from_coeff(CS::one(), pad_limbs[i]);
-                    if i < a_var.limbs.len() {
-                        res_lc[i] = res_lc[i].clone() + &a_var.limbs[i];
-                        res_values[i] = res_values[i] + a_var_limb_values[i];
+                    if i < a_var.len() {
+                        res[i] = res[i].clone().add(&a_var[i]);
                     }
                     if i < b_const.len() {
-                        res_lc[i] = res_lc[i].clone() - &LinearCombination::from_coeff(CS::one(), b_const[i]);
-                        res_values[i] = res_values[i] - b_const[i];
+                        res[i] = res[i].clone().add_bool_with_coeff(CS::one(), &Boolean::Constant(true), -b_const[i]);
                     }
                 }
             },
             (EmulatedLimbs::Constant(a_const), EmulatedLimbs::Allocated(b_var)) => {
-                let b_var_limb_values = b_var.limb_values.clone().unwrap();
                 for i in 0..num_res_limbs {
-                    res_lc[i] = LinearCombination::from_coeff(CS::one(), pad_limbs[i]);
                     if i < a_const.len() {
-                        res_lc[i] = res_lc[i].clone() + &LinearCombination::from_coeff(CS::one(), a_const[i]);
-                        res_values[i] = res_values[i] + a_const[i];
+                        res[i] = res[i].clone().add_bool_with_coeff(CS::one(), &Boolean::Constant(true), a_const[i]);
                     }
-                    if i < b_var.limbs.len() {
-                        res_lc[i] = res_lc[i].clone() - &b_var.limbs[i];
-                        res_values[i] = res_values[i] - b_var_limb_values[i];
+                    if i < b_var.len() {
+                        let mut neg_bl = b_var[i].clone();
+                        neg_bl = neg_bl.scale(-F::one());
+                        res[i] = res[i].clone().add(&neg_bl);
                     }
                 }
             },
             (EmulatedLimbs::Allocated(a_var), EmulatedLimbs::Allocated(b_var)) => {
-                let a_var_limb_values = a_var.limb_values.clone().unwrap();
-                let b_var_limb_values = b_var.limb_values.clone().unwrap();
                 for i in 0..num_res_limbs {
-                    res_lc[i] = LinearCombination::from_coeff(CS::one(), pad_limbs[i]);
-                    if i < a_var.limbs.len() {
-                        res_lc[i] = res_lc[i].clone() + &a_var.limbs[i];
-                        res_values[i] = res_values[i] + a_var_limb_values[i];
+                    if i < a_var.len() {
+                        res[i] = res[i].clone().add(&a_var[i]);
                     }
-                    if i < b_var.limbs.len() {
-                        res_lc[i] = res_lc[i].clone() - &b_var.limbs[i];
-                        res_values[i] = res_values[i] - b_var_limb_values[i];
+                    if i < b_var.len() {
+                        let mut neg_bl = b_var[i].clone();
+                        neg_bl = neg_bl.scale(-F::one());
+                        res[i] = res[i].clone().add(&neg_bl);
                     }
                 }
             },
             (EmulatedLimbs::Constant(_), EmulatedLimbs::Constant(_)) => panic!("Constant limb case has already been handled"),
         }
 
-        let res = AllocatedLimbs::<F> {
-            limbs: res_lc,
-            limb_values: Some(res_values),
-        };
-        
         Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
     }
 
@@ -547,38 +521,37 @@ where
         }
 
         let num_prod_limbs = a.len() + b.len() - 1;
-        let mut prod_lc: Vec<LinearCombination<F>> = vec![LinearCombination::<F>::zero(); num_prod_limbs];
+        let mut prod: Vec<Num<F>> = vec![Num::<F>::zero(); num_prod_limbs];
         let mut prod_values: Vec<F> = vec![F::zero(); num_prod_limbs];
 
         match (a.limbs.clone(), b.limbs.clone()) {
             (EmulatedLimbs::Constant(const_limbs), EmulatedLimbs::Allocated(var_limbs)) |
             (EmulatedLimbs::Allocated(var_limbs), EmulatedLimbs::Constant(const_limbs)) => {
-                let var_limb_values = var_limbs.limb_values.clone().unwrap();
-                for i in 0..var_limbs.limbs.len() {
+                for i in 0..var_limbs.len() {
                     for j in 0..const_limbs.len() {
-                        prod_lc[i+j] = prod_lc[i+j].clone() + &mul_lc_with_scalar(&var_limbs.limbs[i], &const_limbs[j]);
-                        prod_values[i+j] = prod_values[i+j] + var_limb_values[i] * const_limbs[j];
+                        prod[i+j] = prod[i+j].clone().add(&var_limbs[i].clone().scale(const_limbs[j]));
                     }
                 }
             },
             (EmulatedLimbs::Allocated(a_var), EmulatedLimbs::Allocated(b_var)) => {
-                let a_var_limb_values = a_var.limb_values.clone().unwrap();
-                let b_var_limb_values = b_var.limb_values.clone().unwrap();
+                let a_var_limb_values: Vec<F> = a_var.iter().map(|v| v.get_value().unwrap()).collect();
+                let b_var_limb_values: Vec<F> = b_var.iter().map(|v| v.get_value().unwrap()).collect();
                 for i in 0..a.len() {
                     for j in 0..b.len() {
                         prod_values[i+j] += a_var_limb_values[i] * b_var_limb_values[j];
                     }
                 }
 
-                prod_lc = (0..num_prod_limbs)
+                let prod_allocated_nums: Vec<AllocatedNum<F>> = (0..num_prod_limbs)
                     .map(|i| {
-                        cs.alloc(
-                            || format!("product limb {i}"),
+                        AllocatedNum::alloc(
+                            cs.namespace(|| format!("product limb {i}")),
                             || Ok(prod_values[i]),
                         )
-                        .map(|v| LinearCombination::<F>::zero() + v)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+
+                prod = prod_allocated_nums.into_iter().map(|a| Num::from(a)).collect();
 
                 let mut c = F::zero();
                 for _ in 0..num_prod_limbs {
@@ -587,7 +560,9 @@ where
                         || format!("pointwise product @ {c:?}"),
                         |lc| {
                             let mut coeff = F::one();
-                            a_var.limbs.iter().fold(lc, |acc, elem| {
+                            let a_lcs: Vec<LinearCombination<F>> = a_var.iter().map(|x| x.lc(F::one())).collect();
+                            
+                            a_lcs.iter().fold(lc, |acc, elem| {
                                 let r = acc + (coeff, elem);
                                 coeff *= c;
                                 r
@@ -595,7 +570,9 @@ where
                         },
                         |lc| {
                             let mut coeff = F::one();
-                            b_var.limbs.iter().fold(lc, |acc, elem| {
+                            let b_lcs: Vec<LinearCombination<F>> = b_var.iter().map(|x| x.lc(F::one())).collect();
+
+                            b_lcs.iter().fold(lc, |acc, elem| {
                                 let r = acc + (coeff, elem);
                                 coeff *= c;
                                 r
@@ -603,7 +580,9 @@ where
                         },
                         |lc| {
                             let mut coeff = F::one();
-                            prod_lc.iter().fold(lc, |acc, elem| {
+                            let prod_lcs: Vec<LinearCombination<F>> = prod.iter().map(|x| x.lc(F::one())).collect();
+
+                            prod_lcs.iter().fold(lc, |acc, elem| {
                                 let r = acc + (coeff, elem);
                                 coeff *= c;
                                 r
@@ -615,12 +594,7 @@ where
             (EmulatedLimbs::Constant(_), EmulatedLimbs::Constant(_)) => panic!("Constant limb case has already been handled"),
         }
 
-        let res = AllocatedLimbs::<F> {
-            limbs: prod_lc,
-            limb_values: Some(prod_values),
-        };
-        
-        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
+        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(prod), next_overflow))
     }
 
     pub fn mul<CS>(
@@ -665,28 +639,20 @@ where
             self.clone()
         };
 
-        let mut prod_lc: Vec<LinearCombination<F>> = vec![];
-        let mut prod_values: Vec<F> = vec![];
+        let mut prod: Vec<Num<F>> = vec![];
         let constant_scalar = bigint_to_scalar(constant);
 
         match elem.limbs {
-            EmulatedLimbs::Allocated(var) => {
-                let var_limb_values = var.limb_values.clone().unwrap();
+            EmulatedLimbs::Allocated(allocated_limbs) => {
 
-                for i in 0..var.limbs.len() {
-                    prod_lc.push(mul_lc_with_scalar(&var.limbs[i], &constant_scalar));
-                    prod_values.push(var_limb_values[i] * constant_scalar);
+                for i in 0..allocated_limbs.len() {
+                    prod.push(allocated_limbs[i].clone().scale(constant_scalar));
                 }
             },
             EmulatedLimbs::Constant(_) => panic!("mul_const not implemented for element with constant limbs"),
         }
 
-        let res = AllocatedLimbs::<F> {
-            limbs: prod_lc,
-            limb_values: Some(prod_values),
-        };
-        
-        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(res), next_overflow))
+        Ok(Self::new_internal_element(EmulatedLimbs::Allocated(prod), next_overflow))
     }
 
     pub fn inverse<CS>(
@@ -762,25 +728,17 @@ where
 
         match &self.limbs {
             EmulatedLimbs::Allocated(var) => {
-                let var_limb_values = var.limb_values.clone().unwrap();
 
                 for i in 0..num_chunks {
                     let mut part_lcs = vec![];
-                    let mut part_values = vec![];
                     for j in 0..P::num_limbs() {
                         if i*P::num_limbs() + j < self.len() {
-                            part_lcs.push(var.limbs[i*P::num_limbs() + j].clone());
-                            part_values.push(var_limb_values[i*P::num_limbs() + j]);
+                            part_lcs.push(var[i*P::num_limbs() + j].clone());
                         } 
                     }
 
-                    let res = AllocatedLimbs::<F> {
-                        limbs: part_lcs,
-                        limb_values: Some(part_values),
-                    };
-                    
                     let chunk = Self {
-                        limbs: EmulatedLimbs::Allocated(res),
+                        limbs: EmulatedLimbs::Allocated(part_lcs),
                         overflow: self.overflow,
                         internal: self.internal,
                         marker: PhantomData,

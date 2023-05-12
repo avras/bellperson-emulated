@@ -1,24 +1,28 @@
 use std::ops::Rem;
 
+use bellperson::gadgets::num::Num;
 use bellperson::{LinearCombination, SynthesisError, ConstraintSystem, Variable};
-use bellperson::gadgets::{boolean::{Boolean, AllocatedBit}, num::AllocatedNum};
+use bellperson::gadgets::{boolean::AllocatedBit, num::AllocatedNum};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 use num_traits::{Signed, One, Zero};
 
-/// Multiply a LinearCombination by a scalar
-pub fn mul_lc_with_scalar<F>(
-    lc: &LinearCombination<F>,
-    scalar: &F
-) -> LinearCombination<F>
+/// Range check a Num
+pub fn range_check_num<F, CS>(
+    cs: &mut CS,
+    num: &Num<F>,
+    num_bits: usize,
+) -> Result<(), SynthesisError>
 where
-    F: PrimeField
+    F: PrimeField + PrimeFieldBits,
+    CS: ConstraintSystem<F>,
 {
-    let mut scaled_lc = LinearCombination::<F>::zero();
-    for (var, coeff) in lc.iter() {
-        scaled_lc = scaled_lc + (*scalar*coeff, var);
-    }
-    scaled_lc
+    range_check_lc(
+        cs,
+        &num.lc(F::one()),
+        num.get_value().unwrap(),
+        num_bits,
+    )
 }
 
 /// Range check an expression represented by a LinearCombination
@@ -90,44 +94,6 @@ where
     Ok(())
 }
 
-/// Check that a linear combination equals a constant and return a bit
-/// 
-/// Based on `alloc_num_equals` in `Nova/src/gadgets/utils.rs`
-pub fn alloc_lc_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
-    mut cs: CS,
-    a: &LinearCombination<F>,
-    a_value: F,
-    b: F,
-) -> Result<AllocatedBit, SynthesisError> {
-    // Allocate and constrain `r`: result boolean bit.
-    // It equals `true` if `a` equals `b`, `false` otherwise
-    let r = AllocatedBit::alloc(cs.namespace(|| "r"), Some(a_value == b))?;
-  
-    // Allocate t s.t. t=1 if a == b else 1/(a - b)
-    let t_value = if a_value == b {
-        F::one()
-    } else {
-        (a_value - b).invert().unwrap()
-    };
-    let t = AllocatedNum::alloc(cs.namespace(|| "t"), || Ok(t_value))?;
-  
-    cs.enforce(
-        || "t*(a - b) = 1 - r",
-        |lc| lc + t.get_variable(),
-        |lc| lc + a - &LinearCombination::from_coeff(CS::one(), b),
-        |lc| lc + CS::one() - r.get_variable(),
-    );
-  
-    cs.enforce(
-        || "r*(a - b) = 0",
-        |lc| lc + r.get_variable(),
-        |lc| lc + a - &LinearCombination::from_coeff(CS::one(), b),
-        |lc| lc,
-    );
-  
-    Ok(r)
-}
-
 /// Range check a constant field element
 pub fn range_check_constant<F>(
     value: F,
@@ -151,6 +117,44 @@ where
     }
 
     Ok(())
+}
+
+/// Check that a Num equals a constant and return a bit
+/// 
+/// Based on `alloc_num_equals` in `Nova/src/gadgets/utils.rs`
+pub fn alloc_num_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
+    mut cs: CS,
+    a: &Num<F>,
+    b: F,
+) -> Result<AllocatedBit, SynthesisError> {
+    // Allocate and constrain `r`: result boolean bit.
+    // It equals `true` if `a` equals `b`, `false` otherwise
+    let a_value = a.get_value().unwrap();
+    let r = AllocatedBit::alloc(cs.namespace(|| "r"), Some(a_value == b))?;
+  
+    // Allocate t s.t. t=1 if a == b else 1/(a - b)
+    let t_value = if a_value == b {
+        F::one()
+    } else {
+        (a_value - b).invert().unwrap()
+    };
+    let t = AllocatedNum::alloc(cs.namespace(|| "t"), || Ok(t_value))?;
+  
+    cs.enforce(
+        || "t*(a - b) = 1 - r",
+        |lc| lc + t.get_variable(),
+        |lc| lc + &a.lc(F::one()) - &LinearCombination::from_coeff(CS::one(), b),
+        |lc| lc + CS::one() - r.get_variable(),
+    );
+  
+    cs.enforce(
+        || "r*(a - b) = 0",
+        |lc| lc + r.get_variable(),
+        |lc| lc + &a.lc(F::one()) - &LinearCombination::from_coeff(CS::one(), b),
+        |lc| lc,
+    );
+  
+    Ok(r)
 }
 
 /// Convert a non-negative BigInt into a field element
@@ -214,79 +218,4 @@ pub fn decompose(
         tmp >>= num_bits_per_limb;
     }
     Ok(res)
-}
-
-/// Copy of bellman::gadgets::num to access the otherwise private fields.
-/// TODO: See if it can be removed. Neptune codebase uses Num without
-/// requiring access to private fields
-pub struct Num<F: PrimeField> {
-    pub lc: LinearCombination<F>,
-    pub value: Option<F>,
-}
-
-
-impl<F: PrimeField> Num<F> {
-    pub fn new(value: Option<F>, num: LinearCombination<F>) -> Self {
-        Self { value, lc: num }
-    }
-
-    pub fn zero() -> Self {
-        Num {
-            value: Some(F::zero()),
-            lc: LinearCombination::zero(),
-        }
-    }
-
-    pub fn get_value(&self) -> Option<F> {
-        self.value
-    }
-
-    pub fn lc(&self, coeff: F) -> LinearCombination<F> {
-        LinearCombination::zero() + (coeff, &self.lc)
-    }
-
-    pub fn add_bool_with_coeff(self, one: Variable, bit: &Boolean, coeff: F) -> Self {
-        let newval = match (self.value, bit.get_value()) {
-            (Some(mut curval), Some(bval)) => {
-                if bval {
-                    curval.add_assign(&coeff);
-                }
-
-                Some(curval)
-            }
-            _ => None,
-        };
-
-        Num {
-            value: newval,
-            lc: self.lc + &bit.lc(one, coeff),
-        }
-    }
-
-    pub fn add(self, other: &Self) -> Self {
-        let lc = self.lc + &other.lc;
-        let value = match (self.value, other.value) {
-            (Some(v1), Some(v2)) => {
-                let mut tmp = v1;
-                tmp.add_assign(&v2);
-                Some(tmp)
-            }
-            (Some(v), None) | (None, Some(v)) => Some(v),
-            (None, None) => None,
-        };
-
-        Num { value, lc }
-    }
-
-    pub fn scale(mut self, scalar: F) -> Self {
-        for (_variable, fr) in self.lc.iter_mut() {
-            fr.mul_assign(&scalar);
-        }
-
-        if let Some(ref mut v) = self.value {
-            v.mul_assign(&scalar);
-        }
-
-        self
-    }
 }

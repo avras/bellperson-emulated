@@ -1,20 +1,16 @@
 use std::{marker::PhantomData, ops::Rem};
 
-use bellperson::{LinearCombination, SynthesisError, ConstraintSystem, gadgets::boolean::AllocatedBit};
+use bellperson::gadgets::num::AllocatedNum;
+use bellperson::{SynthesisError, ConstraintSystem};
+use bellperson::gadgets::{boolean::{AllocatedBit, Boolean}, num::Num};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{Zero, One, Signed};
 
 use crate::util::*;
 
-#[derive(Clone)]
-pub struct AllocatedLimbs<F: PrimeField + PrimeFieldBits> {
-    pub(crate) limbs: Vec<LinearCombination<F>>,
-    pub(crate) limb_values: Option<Vec<F>>,
-}
-
 pub enum EmulatedLimbs<F: PrimeField + PrimeFieldBits> {
-    Allocated(AllocatedLimbs<F>),
+    Allocated(Vec<Num<F>>),
     Constant(Vec<F>),
 }
 
@@ -56,22 +52,17 @@ where
     where
         CS: ConstraintSystem<F>,
     {
-        let mut lc_vec: Vec<LinearCombination<F>> = vec![];
+        let mut num_vec: Vec<Num<F>> = vec![];
 
         for (i, v) in limb_values.into_iter().enumerate() {
-            let allocated_limb = cs.alloc(
-                || format!("allocating limb {i}"),
+            let allocated_limb = AllocatedNum::alloc(
+                cs.namespace(|| format!("allocating limb {i}")),
                 || Ok(*v),
             )?;
-            lc_vec.push(LinearCombination::zero() + allocated_limb);
+            num_vec.push(Num::<F>::from(allocated_limb));
         }
         
-        let allocated_limbs = AllocatedLimbs {
-            limbs: lc_vec,
-            limb_values: Some(limb_values.clone()),
-        };
-        
-        Ok(EmulatedLimbs::Allocated(allocated_limbs))
+        Ok(EmulatedLimbs::Allocated(num_vec))
     }
 }
 
@@ -178,8 +169,10 @@ where
         let mut res: BigUint = Zero::zero();
         let one: &BigUint = &One::one();
         let mut base: BigUint = one.clone();
-        let limbs = match &value.limbs {
-            EmulatedLimbs::Allocated(x) => x.limb_values.as_ref().unwrap(),
+        let limbs = match value.limbs.clone() {
+            EmulatedLimbs::Allocated(x) => {
+                x.into_iter().map(|a| a.get_value().unwrap()).collect()
+            },
             EmulatedLimbs::Constant(x) => x,
         };
         for i in 0..limbs.len() {
@@ -225,9 +218,8 @@ where
     }
 
     pub fn len(&self) -> usize {
-        match self.limbs.as_ref() {
-            // TODO: Check that the lengths of allocated_limbs.limbs and allocated_limbs.limb_values match
-            EmulatedLimbs::Allocated(allocated_limbs) => allocated_limbs.limbs.len(),
+        match &self.limbs {
+            EmulatedLimbs::Allocated(allocated_limbs) => allocated_limbs.len(),
             EmulatedLimbs::Constant(constant_limbs) => constant_limbs.len(),
         }
     }
@@ -323,28 +315,20 @@ where
             }
         }
         if let EmulatedLimbs::Allocated(allocated_limbs) = &self.limbs {
-            if allocated_limbs.limbs.len() != allocated_limbs.limb_values.as_ref().map(|v| v.len()).unwrap() {
-                eprintln!("Limb counts in LCs and values do not match");
-                return Err(SynthesisError::Unsatisfiable);
-            }
-
-            if modulus_width && allocated_limbs.limbs.len() != P::num_limbs() {
-                eprintln!("LC limb count does not match required count");
+            if modulus_width && allocated_limbs.len() != P::num_limbs() {
+                eprintln!("Allocated limb count does not match required count");
                 return Err(SynthesisError::Unsatisfiable);
             }
             
-            let limb_values = allocated_limbs.limb_values.as_ref().unwrap();
-            
-            for i in 0..allocated_limbs.limbs.len() {
+            for i in 0..allocated_limbs.len() {
                 let mut required_bit_width = P::bits_per_limb();
                 if modulus_width && i == P::num_limbs() - 1 {
                     required_bit_width = (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
                 }
 
-                range_check_lc(
+                range_check_num(
                     &mut cs.namespace(|| format!("range check limb {i}")),
-                    &allocated_limbs.limbs[i],
-                    limb_values[i],
+                    &allocated_limbs[i],
                     required_bit_width
                 )?;
             }
@@ -409,29 +393,22 @@ where
         }
 
         if let EmulatedLimbs::<F>::Allocated(allocated_limbs) = &self.limbs {
-            if allocated_limbs.limbs.len() != allocated_limbs.limb_values.as_ref().map(|v| v.len()).unwrap() {
-                eprintln!("Limb counts in LCs and values do not match");
-                return Err(SynthesisError::Unsatisfiable);
-            }
-
             let mut coeffs = vec![F::zero(); group_size];
             for i in 0..group_size {
                 coeffs[i] = bigint_to_scalar(&(BigInt::one() << P::bits_per_limb() * i));
             }
             
             let new_num_limbs = (P::num_limbs() + group_size - 1)/group_size;
-            let mut res = vec![LinearCombination::<F>::zero(); new_num_limbs];
-            let mut res_values = vec![F::zero(); new_num_limbs];
+            let mut res = vec![Num::<F>::zero(); new_num_limbs];
 
             for i in 0..new_num_limbs {
                 for j in 0..group_size {
-                    if i*group_size + j < allocated_limbs.limbs.len() {
-                        res[i] = mul_lc_with_scalar(&allocated_limbs.limbs[i*group_size+j], &coeffs[j]) + &res[i];
-                        res_values[i] += allocated_limbs.limb_values.as_ref().unwrap()[i*group_size+j] * coeffs[j];
+                    if i*group_size + j < allocated_limbs.len() {
+                        res[i] = allocated_limbs[i*group_size+j].clone().scale(coeffs[j]).add(&res[i]);
                     }
                 }
             }
-            return Ok(EmulatedLimbs::Allocated(AllocatedLimbs { limbs: res, limb_values: Some(res_values) }));
+            return Ok(EmulatedLimbs::Allocated(res));
         }
         // Should not reach this line
         return Err(SynthesisError::Unsatisfiable);
@@ -459,8 +436,7 @@ where
         }
 
         match &self.limbs {
-            EmulatedLimbs::Allocated(var) => {
-                let var_limb_values = var.limb_values.clone().unwrap();
+            EmulatedLimbs::Allocated(allocated_limbs) => {
                 // Number of modulus bits in most significant limb
                 let num_mod_bits_in_msl = P::modulus().bits() as usize - (P::num_limbs()-1)*P::bits_per_limb();
 
@@ -471,10 +447,9 @@ where
                         P::bits_per_limb()
                     };
 
-                    range_check_lc(
+                    range_check_num(
                         &mut cs.namespace(|| format!("range check limb {i}")),
-                        &var.limbs[i],
-                        var_limb_values[i],
+                        &allocated_limbs[i],
                         num_bits,
                     )?;
                 }
@@ -494,10 +469,9 @@ where
                                 bigint_to_scalar(&max_lsl_value)
                             };
             
-                            let bit = alloc_lc_equals_constant(
+                            let bit = alloc_num_equals_constant(
                                 cs.namespace(|| format!("limb {i} equals max value")),
-                                &var.limbs[i],
-                                var_limb_values[i],
+                                &allocated_limbs[i],
                                 max_limb_value,
                             );
                             bit.unwrap()
@@ -516,19 +490,13 @@ where
                     let c = bigint_to_scalar(&pseudo_mersenne_params.c);
 
                     // Least significant limb increased by c if all the most significant limbs are maxxed out
-                    // If kary_and is true, then lsl_lc = var.limbs[0] + c. Otherwise, lsl_lc = var.limbs[0].
+                    // If kary_and is true, then lsl_num = allocated_limbs[0] + c. Otherwise, lsl_num = allocated_limbs[0].
                     // The latter is already within P::bits_per_limb(). If the former only has P::bits_per_limb(),
-                    // then var.limbs[0] is at most 2^(P::bits_per_limb())-1-c
-                    let lsl_lc = var.limbs[0].clone() + (c, kary_and.get_variable());
-                    let lsl_lc_value = if kary_and.get_value().unwrap() {
-                        var_limb_values[0] + c
-                    } else {
-                        var_limb_values[0]
-                    };
-                    range_check_lc(
+                    // then allocated_limbs[0] is at most 2^(P::bits_per_limb())-1-c
+                    let lsl_num = allocated_limbs[0].clone().add_bool_with_coeff(CS::one(), &Boolean::Is(kary_and), c);
+                    range_check_num(
                         &mut cs.namespace(|| format!("range check limb least significant limb + possibly c")),
-                        &lsl_lc,
-                        lsl_lc_value,
+                        &lsl_num,
                         P::bits_per_limb(),
                     )?;
 
