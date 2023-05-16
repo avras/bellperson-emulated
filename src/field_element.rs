@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, ops::Rem};
 
 use bellperson::gadgets::num::AllocatedNum;
-use bellperson::{SynthesisError, ConstraintSystem};
+use bellperson::{SynthesisError, ConstraintSystem, LinearCombination};
 use bellperson::gadgets::{boolean::{AllocatedBit, Boolean}, num::Num};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, BigUint};
@@ -510,6 +510,65 @@ where
         Ok(())
     }
 
+    // If condition is true, return a. Otherwise return b.
+    // Based on Nova/src/gadgets/utils.rs:conditionally_select
+    pub fn conditionally_select<CS>(
+        cs: &mut CS,
+        a: &Self,
+        b: &Self,
+        condition: &Boolean,
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        if a.len() != b.len() {
+            eprintln!("Current implementation of conditionally_select only allows same number of limbs");
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let res_overflow = a.overflow.max(b.overflow);
+
+        let res_values = if condition.get_value().unwrap() {
+            match &a.limbs {
+                EmulatedLimbs::Allocated(a_var) => a_var.iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
+                EmulatedLimbs::Constant(a_const) => a_const.clone(),
+            }
+        } else {
+            match &b.limbs {
+                EmulatedLimbs::Allocated(b_var) => b_var.into_iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
+                EmulatedLimbs::Constant(b_const) => b_const.clone(),
+            }
+        };
+
+        let res_alloc_limbs = EmulatedLimbs::allocate_limbs(
+            &mut cs.namespace(|| "allocate result limbs"),
+            &res_values
+        )?;
+
+        match &res_alloc_limbs {
+            EmulatedLimbs::Allocated(res_limbs) => {
+                for i in 0..res_values.len() {
+                    let a_lc = match &a.limbs {
+                        EmulatedLimbs::Allocated(a_var) => a_var[i].lc(F::one()),
+                        EmulatedLimbs::Constant(a_const) => LinearCombination::<F>::from_coeff(CS::one(), a_const[i]),
+                    };
+                    let b_lc = match &b.limbs {
+                        EmulatedLimbs::Allocated(b_var) => b_var[i].lc(F::one()),
+                        EmulatedLimbs::Constant(b_const) => LinearCombination::<F>::from_coeff(CS::one(), b_const[i]),
+                    };
+
+                    cs.enforce(
+                        || format!("conditional select constraint on limb {i}"),
+                        |lc| lc + &a_lc - &b_lc,
+                        |lc| lc + &condition.lc(CS::one(), F::one()),
+                        |lc| lc + &res_limbs[i].lc(F::one()) - &b_lc,
+                    );
+                }
+            },
+            EmulatedLimbs::Constant(_) => panic!("Unreachable match arm")
+        }
+        let res = Self::new_internal_element(res_alloc_limbs, res_overflow);
+        return Ok(res);
+    }
 }
 
 #[cfg(test)]
@@ -781,10 +840,9 @@ mod tests {
     #[test]
     fn test_field_membership() {
         let mut cs = TestConstraintSystem::<Fp>::new();
-        let q_int = (BigInt::one() << 255) - BigInt::from(19);
         let mut rng = rand::thread_rng();
 
-        let a_int = rng.gen_bigint_range(&BigInt::zero(), &q_int);
+        let a_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
         let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
         let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
         println!("Num constraints before field membership check = {:?}", cs.num_constraints());
@@ -799,7 +857,7 @@ mod tests {
         assert!(cs.is_satisfied());
         println!("Num constraints after field membership check = {:?}", cs.num_constraints());
 
-        let b_int = &q_int - BigInt::one();
+        let b_int = &Ed25519Fp::modulus() - BigInt::one();
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
         let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "q-1"));
         assert!(b.is_ok());
@@ -824,6 +882,115 @@ mod tests {
 
         assert!(!cs.is_satisfied());
 
+    }
+
+    #[test]
+    fn test_conditionally_select() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let a_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+        let b_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+
+        let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
+        let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
+
+        let one = TestConstraintSystem::<Fp>::one();
+        let conditions = vec![false, true];
+        for c in conditions.clone() {
+            let condition = Boolean::constant(c);
+            
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::conditionally_select(
+                &mut cs.namespace(|| format!("conditionally select constant a or b for condition = {c}")),
+                &a_const,
+                &b_const,
+                &condition,
+            );
+            assert!(res.is_ok());
+            let res = res.unwrap();
+
+
+            let res_expected_limbs = match (&a_const.limbs, &b_const.limbs) {
+                (EmulatedLimbs::Constant(a_const_limbs), EmulatedLimbs::Constant(b_const_limbs)) => {
+                    if c {
+                        a_const_limbs
+                    } else {
+                        b_const_limbs
+                    }
+                },
+                _ => panic!("Both sets of limbs must be constant"),
+            };
+
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c constant limb {i} equality for condition = {c}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + (res_expected_limbs[i], one),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
+            
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
+        println!("Number of constraints = {:?}", cs.num_constraints());
+
+        let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
+        let b = b_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b"));
+        assert!(a.is_ok());
+        assert!(b.is_ok());
+        let a = a.unwrap();
+        let b = b.unwrap();
+
+        for c in conditions {
+            let condition = Boolean::constant(c);
+            
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::conditionally_select(
+                &mut cs.namespace(|| format!("conditionally select variable a or b for condition = {c}")),
+                &a,
+                &b,
+                &condition,
+            );
+            assert!(res.is_ok());
+            let res = res.unwrap();
+
+            let res_expected_limbs = match (&a.limbs, &b.limbs) {
+                (EmulatedLimbs::Allocated(a_limbs), EmulatedLimbs::Allocated(b_limbs)) => {
+                    if c {
+                        a_limbs
+                    } else {
+                        b_limbs
+                    }
+                },
+                _ => panic!("Both sets of limbs must be allocated"),
+            };
+
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c variable limb {i} equality for condition = {c}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
+            
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
+        println!("Number of constraints = {:?}", cs.num_constraints());
     }
 
 }
