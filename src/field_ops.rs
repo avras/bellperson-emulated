@@ -244,6 +244,47 @@ where
         Ok(())
     }
 
+    /// Asserts that the limbs of an allocated `EmulatedFieldElement` limbs equal the
+    /// limbs of a specific constant `EmulatedFieldElement`.
+    /// 
+    /// This methods uses fewer constraints (equal to limb count) than the general
+    /// `assert_is_equal`. It is useful for checking equality with constants like
+    /// 0 or 1 (which constitute the coordinates of the identity in ed25519).
+    pub fn assert_equality_to_constant<CS>(
+        &self,
+        cs: &mut CS,
+        constant: &Self,
+    ) -> Result<(), SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        if self.is_constant() || !constant.is_constant() {
+            eprintln!("Method should be called on a non-constant field element with a constant argument");
+            return Err(SynthesisError::Unsatisfiable);
+        }
+
+        match (&self.limbs, &constant.limbs) {
+            (EmulatedLimbs::Allocated(var_limbs), EmulatedLimbs::Constant(const_limbs)) => {
+                if var_limbs.len() != const_limbs.len() {
+                    eprintln!("Limb counts do not match: {} != {}", var_limbs.len(), const_limbs.len());
+                    return Err(SynthesisError::Unsatisfiable);
+                }
+
+                for i in 0..var_limbs.len() {
+                    cs.enforce(
+                        || format!("checking equality of limb {i}"),
+                        |lc| lc,
+                        |lc| lc,
+                        |lc| lc + &var_limbs[i].lc(F::one()) - (const_limbs[i], CS::one()),
+                    );
+                }
+            },
+            _ => panic!("Unreachable code reached"),
+        }
+
+        Ok(())
+    }
+
     pub fn reduce<CS>(
         &self,
         cs: &mut CS,

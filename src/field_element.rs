@@ -607,6 +607,31 @@ mod tests {
     } 
 
     #[test]
+    fn test_constant_equality() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let a_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+
+        let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
+
+        let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
+        assert!(a.is_ok());
+        let a = a.unwrap();
+
+        let res = a.assert_equality_to_constant(
+            &mut cs.namespace(|| "check equality"),
+            &a_const,
+        );
+        assert!(res.is_ok());
+
+        if !cs.is_satisfied() {
+            println!("{:?}", cs.which_is_unsatisfied());
+        }
+        assert!(cs.is_satisfied());
+        println!("Number of constraints = {:?}", cs.num_constraints());
+    }
+
+    #[test]
     fn test_add() {
         let mut cs = TestConstraintSystem::<Fp>::new();
         let mut rng = rand::thread_rng();
