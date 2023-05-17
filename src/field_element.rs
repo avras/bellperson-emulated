@@ -510,32 +510,32 @@ where
         Ok(())
     }
 
-    // If condition is true, return a. Otherwise return b.
+    // If condition is true, return a1. Otherwise return a0.
     // Based on Nova/src/gadgets/utils.rs:conditionally_select
     pub fn conditionally_select<CS>(
         cs: &mut CS,
-        a: &Self,
-        b: &Self,
+        a0: &Self,
+        a1: &Self,
         condition: &Boolean,
     ) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
-        if a.len() != b.len() {
+        if a1.len() != a0.len() {
             eprintln!("Current implementation of conditionally_select only allows same number of limbs");
             return Err(SynthesisError::Unsatisfiable);
         }
-        let res_overflow = a.overflow.max(b.overflow);
+        let res_overflow = a1.overflow.max(a0.overflow);
 
         let res_values = if condition.get_value().unwrap() {
-            match &a.limbs {
-                EmulatedLimbs::Allocated(a_var) => a_var.iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
-                EmulatedLimbs::Constant(a_const) => a_const.clone(),
+            match &a1.limbs {
+                EmulatedLimbs::Allocated(a1_var) => a1_var.iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
+                EmulatedLimbs::Constant(a1_const) => a1_const.clone(),
             }
         } else {
-            match &b.limbs {
-                EmulatedLimbs::Allocated(b_var) => b_var.into_iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
-                EmulatedLimbs::Constant(b_const) => b_const.clone(),
+            match &a0.limbs {
+                EmulatedLimbs::Allocated(a0_var) => a0_var.into_iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
+                EmulatedLimbs::Constant(a0_const) => a0_const.clone(),
             }
         };
 
@@ -547,20 +547,20 @@ where
         match &res_alloc_limbs {
             EmulatedLimbs::Allocated(res_limbs) => {
                 for i in 0..res_values.len() {
-                    let a_lc = match &a.limbs {
-                        EmulatedLimbs::Allocated(a_var) => a_var[i].lc(F::one()),
-                        EmulatedLimbs::Constant(a_const) => LinearCombination::<F>::from_coeff(CS::one(), a_const[i]),
+                    let a1_lc = match &a1.limbs {
+                        EmulatedLimbs::Allocated(a1_var) => a1_var[i].lc(F::one()),
+                        EmulatedLimbs::Constant(a1_const) => LinearCombination::<F>::from_coeff(CS::one(), a1_const[i]),
                     };
-                    let b_lc = match &b.limbs {
-                        EmulatedLimbs::Allocated(b_var) => b_var[i].lc(F::one()),
-                        EmulatedLimbs::Constant(b_const) => LinearCombination::<F>::from_coeff(CS::one(), b_const[i]),
+                    let a0_lc = match &a0.limbs {
+                        EmulatedLimbs::Allocated(a0_var) => a0_var[i].lc(F::one()),
+                        EmulatedLimbs::Constant(a0_const) => LinearCombination::<F>::from_coeff(CS::one(), a0_const[i]),
                     };
 
                     cs.enforce(
                         || format!("conditional select constraint on limb {i}"),
-                        |lc| lc + &a_lc - &b_lc,
+                        |lc| lc + &a1_lc - &a0_lc,
                         |lc| lc + &condition.lc(CS::one(), F::one()),
-                        |lc| lc + &res_limbs[i].lc(F::one()) - &b_lc,
+                        |lc| lc + &res_limbs[i].lc(F::one()) - &a0_lc,
                     );
                 }
             },
@@ -937,9 +937,9 @@ mod tests {
             let res_expected_limbs = match (&a_const.limbs, &b_const.limbs) {
                 (EmulatedLimbs::Constant(a_const_limbs), EmulatedLimbs::Constant(b_const_limbs)) => {
                     if c {
-                        a_const_limbs
-                    } else {
                         b_const_limbs
+                    } else {
+                        a_const_limbs
                     }
                 },
                 _ => panic!("Both sets of limbs must be constant"),
@@ -988,9 +988,9 @@ mod tests {
             let res_expected_limbs = match (&a.limbs, &b.limbs) {
                 (EmulatedLimbs::Allocated(a_limbs), EmulatedLimbs::Allocated(b_limbs)) => {
                     if c {
-                        a_limbs
-                    } else {
                         b_limbs
+                    } else {
+                        a_limbs
                     }
                 },
                 _ => panic!("Both sets of limbs must be allocated"),
