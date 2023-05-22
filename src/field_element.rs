@@ -683,6 +683,46 @@ where
         let res = Self::new_internal_element(res_alloc_limbs, res_overflow);
         Ok(res)
     }
+
+
+    // Based on bellperson-nonnative/src/util/gadget.rs:mux_tree
+    // `select_bits` are given in big-endian order and `inputs` have
+    // the zero index input first, i.e. [a0, a1, a2, ...]
+    pub fn mux_tree<'a, CS>(
+        cs: &mut CS,
+        mut select_bits: impl Iterator<Item = &'a Boolean> + Clone,
+        inputs: &[Self],
+    ) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+
+        if let Some(bit) = select_bits.next() {
+            if inputs.len() & 1 != 0 {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+            let left_half = &inputs[..(inputs.len() / 2)];
+            let right_half = &inputs[(inputs.len() / 2)..];
+            let left = Self::mux_tree(
+                &mut cs.namespace(|| "left"),
+                select_bits.clone(),
+                left_half
+            )?;
+            let right = Self::mux_tree(
+                &mut cs.namespace(|| "right"),
+                select_bits,
+                right_half
+            )?;
+            Self::conditionally_select(&mut cs.namespace(|| "join"), &left, &right, bit)
+        }
+        else {
+            if inputs.len() != 1 {
+                return Err(SynthesisError::Unsatisfiable);
+            }
+            Ok(inputs[0].clone())
+        }
+
+    }
 }
 
 #[cfg(test)]
@@ -1275,4 +1315,384 @@ mod tests {
             assert!(cs.is_satisfied());
         }
     }
+
+    #[test]
+    fn test_mux_tree1() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let a0_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+        let a1_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
+
+        let a0_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a0_int);
+        let a1_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a1_int);
+
+        let one = TestConstraintSystem::<Fp>::one();
+        let conditions = vec![false, true];
+        for c in conditions.clone() {
+            let condition = Boolean::constant(c);
+            
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
+                &mut cs.namespace(|| format!("conditionally select constant a0 or a1 for condition = {c}")),
+                [&condition].into_iter(),
+                &[a0_const.clone(), a1_const.clone()],
+            );
+            assert!(res.is_ok());
+            if !c {
+                println!("Number of constraints = {:?}", cs.num_constraints());
+            }
+            let res = res.unwrap();
+
+
+            let res_expected_limbs = match (&a0_const.limbs, &a1_const.limbs) {
+                (EmulatedLimbs::Constant(a0_const_limbs), EmulatedLimbs::Constant(a1_const_limbs)) => {
+                    if c {
+                        a1_const_limbs
+                    } else {
+                        a0_const_limbs
+                    }
+                },
+                _ => panic!("Both sets of limbs must be constant"),
+            };
+
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c constant limb {i} equality for condition = {c}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + (res_expected_limbs[i], one),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
+            
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
+        let num_constraints_here = cs.num_constraints();
+
+        let a0 = a0_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
+        let a1 = a1_const.allocate_field_element_unchecked(&mut cs.namespace(|| "b"));
+        assert!(a0.is_ok());
+        assert!(a1.is_ok());
+        let a0 = a0.unwrap();
+        let a1 = a1.unwrap();
+
+        for c in conditions {
+            let condition = Boolean::constant(c);
+            
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
+                &mut cs.namespace(|| format!("conditionally select variable a or b for condition = {c}")),
+                [&condition].into_iter(),
+                &[a0_const.clone(), a1_const.clone()],
+            );
+            assert!(res.is_ok());
+            if !c {
+                println!("Number of constraints = {:?}", cs.num_constraints()-num_constraints_here);
+            }
+            let res = res.unwrap();
+
+            let res_expected_limbs = match (&a0.limbs, &a1.limbs) {
+                (EmulatedLimbs::Allocated(a0_limbs), EmulatedLimbs::Allocated(a1_limbs)) => {
+                    if c {
+                        a1_limbs
+                    } else {
+                        a0_limbs
+                    }
+                },
+                _ => panic!("Both sets of limbs must be allocated"),
+            };
+
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c variable limb {i} equality for condition = {c}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
+            
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
+    }
+
+    #[test]
+    fn test_mux_tree2() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let mut a_ints = vec![];
+        (0..4).for_each(|_| {
+            a_ints.push(rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus()));
+        });
+
+        let a_consts = a_ints
+            .iter()
+            .map(
+                |i| EmulatedFieldElement::<Fp, Ed25519Fp>::from(i)
+            )
+            .collect::<Vec<_>>();
+
+        let one = TestConstraintSystem::<Fp>::one();
+        let conditions = vec![(false, false), (false, true), (true, false), (true, true)];
+        for (c0, c1) in conditions.clone() {
+            let condition0 = Boolean::constant(c0);
+            let condition1 = Boolean::constant(c1);
+            
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
+                &mut cs.namespace(|| format!("select one of constants a0 or a1 or a2 or a3 for conditions = {c1}, {c0}")),
+                [&condition1, &condition0].into_iter(),
+                &a_consts,
+            );
+            assert!(res.is_ok());
+            if !c0 && !c1 {
+                println!("Number of constraints = {:?}", cs.num_constraints());
+            }
+            let res = res.unwrap();
+
+
+            let a_const_limbs_vec = a_consts
+                .clone()
+                .into_iter()
+                .map(|a_const| {
+                    match &a_const.limbs {
+                        EmulatedLimbs::Constant(a_const_limbs) => a_const_limbs.clone(),
+                        EmulatedLimbs::Allocated(_) => panic!("Unreachable match arm"),
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let res_index = usize::from(c0) + 2*usize::from(c1);
+            let res_expected_limbs = &a_const_limbs_vec[res_index];
+
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c constant limb {i} equality for condition = {c0}, {c1}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + (res_expected_limbs[i], one),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
+            
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
+
+        let num_constraints_here = cs.num_constraints();
+
+        let a_vars = a_consts.iter().enumerate()
+            .map(|(i, a_const)| {
+                let a = a_const.allocate_field_element_unchecked(
+                    &mut cs.namespace(|| format!("a[{i}]")),
+                );
+                assert!(a.is_ok());
+                a.unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        for (c0, c1) in conditions.clone() {
+            let condition0 = Boolean::constant(c0);
+            let condition1 = Boolean::constant(c1);
+            
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
+                &mut cs.namespace(|| format!("select one of variables a0 or a1 or a2 or a3 for conditions = {c1}, {c0}")),
+                [&condition1, &condition0].into_iter(),
+                &a_vars,
+            );
+            assert!(res.is_ok());
+            if !c0 && !c1 {
+                println!("Number of constraints = {:?}", cs.num_constraints() - num_constraints_here);
+            }
+            let res = res.unwrap();
+
+
+            let a_var_limbs_vec = a_vars
+                .clone()
+                .into_iter()
+                .map(|a_var| {
+                    match &a_var.limbs {
+                        EmulatedLimbs::Allocated(a_var_limbs) => a_var_limbs.clone(),
+                        EmulatedLimbs::Constant(_) => panic!("Unreachable match arm"),
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let res_index = usize::from(c0) + 2*usize::from(c1);
+            let res_expected_limbs = &a_var_limbs_vec[res_index];
+
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c variable limb {i} equality for condition = {c0}, {c1}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
+            
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
+    }
+
+    #[test]
+    fn test_mux_tree3() {
+        let mut cs = TestConstraintSystem::<Fp>::new();
+        let mut rng = rand::thread_rng();
+        let mut a_ints = vec![];
+        (0..8).for_each(|_| {
+            a_ints.push(rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus()));
+        });
+
+        let a_consts = a_ints
+            .iter()
+            .map(
+                |i| EmulatedFieldElement::<Fp, Ed25519Fp>::from(i)
+            )
+            .collect::<Vec<_>>();
+
+        let one = TestConstraintSystem::<Fp>::one();
+        let conditions = vec![
+            (false, false, false), (false, false, true), (false, true, false), (false, true, true),
+            (true, false, false), (true, false, true), (true, true, false), (true, true, true),
+            ];
+        for (c0, c1, c2) in conditions.clone() {
+            let condition0 = Boolean::constant(c0);
+            let condition1 = Boolean::constant(c1);
+            let condition2 = Boolean::constant(c2);
+            
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
+                &mut cs.namespace(|| format!("select one of constants a0 to a7 for conditions = {c2}, {c1}, {c0}")),
+                [&condition2, &condition1, &condition0].into_iter(),
+                &a_consts,
+            );
+            assert!(res.is_ok());
+            if !c0 && !c1 && !c2 {
+                println!("Number of constraints = {:?}", cs.num_constraints());
+            }
+            let res = res.unwrap();
+
+
+            let a_const_limbs_vec = a_consts
+                .clone()
+                .into_iter()
+                .map(|a_const| {
+                    match &a_const.limbs {
+                        EmulatedLimbs::Constant(a_const_limbs) => a_const_limbs.clone(),
+                        EmulatedLimbs::Allocated(_) => panic!("Unreachable match arm"),
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let res_index = usize::from(c0) + 2*usize::from(c1) + 4*usize::from(c2);
+            let res_expected_limbs = &a_const_limbs_vec[res_index];
+
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c constant limb {i} equality for condition = {c2}, {c1}, {c0}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + (res_expected_limbs[i], one),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
+            
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
+
+        // let num_constraints_here = cs.num_constraints();
+
+        // let a_vars = a_consts.iter().enumerate()
+        //     .map(|(i, a_const)| {
+        //         let a = a_const.allocate_field_element_unchecked(
+        //             &mut cs.namespace(|| format!("a[{i}]")),
+        //         );
+        //         assert!(a.is_ok());
+        //         a.unwrap()
+        //     })
+        //     .collect::<Vec<_>>();
+
+        // for (c0, c1) in conditions.clone() {
+        //     let condition0 = Boolean::constant(c0);
+        //     let condition1 = Boolean::constant(c1);
+            
+        //     let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
+        //         &mut cs.namespace(|| format!("select one of variables a0 or a1 or a2 or a3 for conditions = {c1}, {c0}")),
+        //         [&condition1, &condition0].into_iter(),
+        //         &a_vars,
+        //     );
+        //     assert!(res.is_ok());
+        //     if !c0 && !c1 {
+        //         println!("Number of constraints = {:?}", cs.num_constraints() - num_constraints_here);
+        //     }
+        //     let res = res.unwrap();
+
+
+        //     let a_var_limbs_vec = a_vars
+        //         .clone()
+        //         .into_iter()
+        //         .map(|a_var| {
+        //             match &a_var.limbs {
+        //                 EmulatedLimbs::Allocated(a_var_limbs) => a_var_limbs.clone(),
+        //                 EmulatedLimbs::Constant(_) => panic!("Unreachable match arm"),
+        //             }
+        //         })
+        //         .collect::<Vec<_>>();
+
+        //     let res_index = usize::from(c0) + 2*usize::from(c1);
+        //     let res_expected_limbs = &a_var_limbs_vec[res_index];
+
+        //     if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+        //         for i in 0..res_limbs.len() {
+        //             cs.enforce(|| format!("c variable limb {i} equality for condition = {c0}, {c1}"),
+        //                 |lc| lc + &res_limbs[i].lc(Fp::one()),
+        //                 |lc| lc + one,
+        //                 |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
+        //             );
+        //         }
+        //     } else {
+        //         // Execution should not reach this line
+        //         eprintln!("res should have allocated limbs");
+        //         assert!(false);
+        //     }
+            
+        //     if !cs.is_satisfied() {
+        //         eprintln!("{:?}", cs.which_is_unsatisfied());
+        //     }
+        //     assert!(cs.is_satisfied());
+        // }
+    }
+
+
 }
