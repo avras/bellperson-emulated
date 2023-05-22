@@ -1631,67 +1631,68 @@ mod tests {
             assert!(cs.is_satisfied());
         }
 
-        // let num_constraints_here = cs.num_constraints();
+        let num_constraints_here = cs.num_constraints();
 
-        // let a_vars = a_consts.iter().enumerate()
-        //     .map(|(i, a_const)| {
-        //         let a = a_const.allocate_field_element_unchecked(
-        //             &mut cs.namespace(|| format!("a[{i}]")),
-        //         );
-        //         assert!(a.is_ok());
-        //         a.unwrap()
-        //     })
-        //     .collect::<Vec<_>>();
+        let a_vars = a_consts.iter().enumerate()
+            .map(|(i, a_const)| {
+                let a = a_const.allocate_field_element_unchecked(
+                    &mut cs.namespace(|| format!("a[{i}]")),
+                );
+                assert!(a.is_ok());
+                a.unwrap()
+            })
+            .collect::<Vec<_>>();
 
-        // for (c0, c1) in conditions.clone() {
-        //     let condition0 = Boolean::constant(c0);
-        //     let condition1 = Boolean::constant(c1);
+        for (c0, c1, c2) in conditions.clone() {
+            let condition0 = Boolean::constant(c0);
+            let condition1 = Boolean::constant(c1);
+            let condition2 = Boolean::constant(c2);
             
-        //     let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
-        //         &mut cs.namespace(|| format!("select one of variables a0 or a1 or a2 or a3 for conditions = {c1}, {c0}")),
-        //         [&condition1, &condition0].into_iter(),
-        //         &a_vars,
-        //     );
-        //     assert!(res.is_ok());
-        //     if !c0 && !c1 {
-        //         println!("Number of constraints = {:?}", cs.num_constraints() - num_constraints_here);
-        //     }
-        //     let res = res.unwrap();
+            let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
+                &mut cs.namespace(|| format!("select one of variables a0 or a1 or a2 or a3 for conditions = {c2}, {c1}, {c0}")),
+                [&condition2, &condition1, &condition0].into_iter(),
+                &a_vars,
+            );
+            assert!(res.is_ok());
+            if !c0 && !c1 && !c2 {
+                println!("Number of constraints = {:?}", cs.num_constraints() - num_constraints_here);
+            }
+            let res = res.unwrap();
 
 
-        //     let a_var_limbs_vec = a_vars
-        //         .clone()
-        //         .into_iter()
-        //         .map(|a_var| {
-        //             match &a_var.limbs {
-        //                 EmulatedLimbs::Allocated(a_var_limbs) => a_var_limbs.clone(),
-        //                 EmulatedLimbs::Constant(_) => panic!("Unreachable match arm"),
-        //             }
-        //         })
-        //         .collect::<Vec<_>>();
+            let a_var_limbs_vec = a_vars
+                .clone()
+                .into_iter()
+                .map(|a_var| {
+                    match &a_var.limbs {
+                        EmulatedLimbs::Allocated(a_var_limbs) => a_var_limbs.clone(),
+                        EmulatedLimbs::Constant(_) => panic!("Unreachable match arm"),
+                    }
+                })
+                .collect::<Vec<_>>();
 
-        //     let res_index = usize::from(c0) + 2*usize::from(c1);
-        //     let res_expected_limbs = &a_var_limbs_vec[res_index];
+            let res_index = usize::from(c0) + 2*usize::from(c1) + 4*usize::from(c2);
+            let res_expected_limbs = &a_var_limbs_vec[res_index];
 
-        //     if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
-        //         for i in 0..res_limbs.len() {
-        //             cs.enforce(|| format!("c variable limb {i} equality for condition = {c0}, {c1}"),
-        //                 |lc| lc + &res_limbs[i].lc(Fp::one()),
-        //                 |lc| lc + one,
-        //                 |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
-        //             );
-        //         }
-        //     } else {
-        //         // Execution should not reach this line
-        //         eprintln!("res should have allocated limbs");
-        //         assert!(false);
-        //     }
+            if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
+                for i in 0..res_limbs.len() {
+                    cs.enforce(|| format!("c variable limb {i} equality for condition = {c2}, {c1}, {c0}"),
+                        |lc| lc + &res_limbs[i].lc(Fp::one()),
+                        |lc| lc + one,
+                        |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
+                    );
+                }
+            } else {
+                // Execution should not reach this line
+                eprintln!("res should have allocated limbs");
+                assert!(false);
+            }
             
-        //     if !cs.is_satisfied() {
-        //         eprintln!("{:?}", cs.which_is_unsatisfied());
-        //     }
-        //     assert!(cs.is_satisfied());
-        // }
+            if !cs.is_satisfied() {
+                eprintln!("{:?}", cs.which_is_unsatisfied());
+            }
+            assert!(cs.is_satisfied());
+        }
     }
 
 
