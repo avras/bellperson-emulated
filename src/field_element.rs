@@ -141,9 +141,9 @@ where
             }
         }
         
-        let mut limbs = vec![F::zero(); P::num_limbs()];
+        let mut limbs = vec![F::ZERO; P::num_limbs()];
         for i in 0..P::num_limbs() {
-            let mut coeff = F::one();
+            let mut coeff = F::ONE;
             for j in 0..P::bits_per_limb() {
                 if v_bits[i*P::bits_per_limb() + j] {
                     limbs[i] += coeff
@@ -394,7 +394,7 @@ where
         }
 
         if let EmulatedLimbs::<F>::Allocated(allocated_limbs) = &self.limbs {
-            let mut coeffs = vec![F::zero(); group_size];
+            let mut coeffs = vec![F::ZERO; group_size];
             for i in 0..group_size {
                 coeffs[i] = bigint_to_scalar(&(BigInt::one() << P::bits_per_limb() * i));
             }
@@ -549,19 +549,19 @@ where
             EmulatedLimbs::Allocated(res_limbs) => {
                 for i in 0..res_values.len() {
                     let a1_lc = match &a1.limbs {
-                        EmulatedLimbs::Allocated(a1_var) => a1_var[i].lc(F::one()),
+                        EmulatedLimbs::Allocated(a1_var) => a1_var[i].lc(F::ONE),
                         EmulatedLimbs::Constant(a1_const) => LinearCombination::<F>::from_coeff(CS::one(), a1_const[i]),
                     };
                     let a0_lc = match &a0.limbs {
-                        EmulatedLimbs::Allocated(a0_var) => a0_var[i].lc(F::one()),
+                        EmulatedLimbs::Allocated(a0_var) => a0_var[i].lc(F::ONE),
                         EmulatedLimbs::Constant(a0_const) => LinearCombination::<F>::from_coeff(CS::one(), a0_const[i]),
                     };
 
                     cs.enforce(
                         || format!("conditional select constraint on limb {i}"),
                         |lc| lc + &a1_lc - &a0_lc,
-                        |_| condition.lc(CS::one(), F::one()),
-                        |lc| lc + &res_limbs[i].lc(F::one()) - &a0_lc,
+                        |_| condition.lc(CS::one(), F::ONE),
+                        |lc| lc + &res_limbs[i].lc(F::ONE) - &a0_lc,
                     );
                 }
             },

@@ -92,7 +92,7 @@ where
                 }
                 if i < b_l.len() {
                     let mut neg_bl = b_l[i].clone();
-                    neg_bl = neg_bl.scale(-F::one());
+                    neg_bl = neg_bl.scale(-F::ONE);
                     diff_num = diff_num.add(&neg_bl);
                 }
                 if i > 0 {
@@ -143,7 +143,7 @@ where
         let mut sum_higher_order_bits = Num::<F>::zero();
         let mut sum_shifted_bits = Num::<F>::zero();
         let mut coeff = bigint_to_scalar::<F>(&(BigInt::one() << start_digit));
-        let mut coeff_shifted = F::one();
+        let mut coeff_shifted = F::ONE;
 
         for b in v_booleans {
             sum_higher_order_bits = sum_higher_order_bits.add_bool_with_coeff(CS::one(), &b, coeff);
@@ -156,7 +156,7 @@ where
             || "enforce equality between input value and weighted sum of higher order bits",
             |lc| lc,
             |lc| lc,
-            |lc| lc + &v.lc(F::one()) - &sum_higher_order_bits.lc(F::one()),
+            |lc| lc + &v.lc(F::ONE) - &sum_higher_order_bits.lc(F::ONE),
         );
         
         Ok(sum_shifted_bits)
@@ -275,7 +275,7 @@ where
                         || format!("checking equality of limb {i}"),
                         |lc| lc,
                         |lc| lc,
-                        |lc| lc + &var_limbs[i].lc(F::one()) - (const_limbs[i], CS::one()),
+                        |lc| lc + &var_limbs[i].lc(F::ONE) - (const_limbs[i], CS::one()),
                     );
                 }
             },
@@ -473,7 +473,7 @@ where
                     }
                     if i < b_var.len() {
                         let mut neg_bl = b_var[i].clone();
-                        neg_bl = neg_bl.scale(-F::one());
+                        neg_bl = neg_bl.scale(-F::ONE);
                         res[i] = res[i].clone().add(&neg_bl);
                     }
                 }
@@ -485,7 +485,7 @@ where
                     }
                     if i < b_var.len() {
                         let mut neg_bl = b_var[i].clone();
-                        neg_bl = neg_bl.scale(-F::one());
+                        neg_bl = neg_bl.scale(-F::ONE);
                         res[i] = res[i].clone().add(&neg_bl);
                     }
                 }
@@ -563,7 +563,7 @@ where
 
         let num_prod_limbs = a.len() + b.len() - 1;
         let mut prod: Vec<Num<F>> = vec![Num::<F>::zero(); num_prod_limbs];
-        let mut prod_values: Vec<F> = vec![F::zero(); num_prod_limbs];
+        let mut prod_values: Vec<F> = vec![F::ZERO; num_prod_limbs];
 
         match (a.limbs.clone(), b.limbs.clone()) {
             (EmulatedLimbs::Constant(const_limbs), EmulatedLimbs::Allocated(var_limbs)) |
@@ -594,14 +594,14 @@ where
 
                 prod = prod_allocated_nums.into_iter().map(|a| Num::from(a)).collect();
 
-                let mut c = F::zero();
+                let mut c = F::ZERO;
                 for _ in 0..num_prod_limbs {
-                    c += F::one();
+                    c += F::ONE;
                     cs.enforce(
                         || format!("pointwise product @ {c:?}"),
                         |lc| {
-                            let mut coeff = F::one();
-                            let a_lcs: Vec<LinearCombination<F>> = a_var.iter().map(|x| x.lc(F::one())).collect();
+                            let mut coeff = F::ONE;
+                            let a_lcs: Vec<LinearCombination<F>> = a_var.iter().map(|x| x.lc(F::ONE)).collect();
                             
                             a_lcs.iter().fold(lc, |acc, elem| {
                                 let r = acc + (coeff, elem);
@@ -610,8 +610,8 @@ where
                             })
                         },
                         |lc| {
-                            let mut coeff = F::one();
-                            let b_lcs: Vec<LinearCombination<F>> = b_var.iter().map(|x| x.lc(F::one())).collect();
+                            let mut coeff = F::ONE;
+                            let b_lcs: Vec<LinearCombination<F>> = b_var.iter().map(|x| x.lc(F::ONE)).collect();
 
                             b_lcs.iter().fold(lc, |acc, elem| {
                                 let r = acc + (coeff, elem);
@@ -620,8 +620,8 @@ where
                             })
                         },
                         |lc| {
-                            let mut coeff = F::one();
-                            let prod_lcs: Vec<LinearCombination<F>> = prod.iter().map(|x| x.lc(F::one())).collect();
+                            let mut coeff = F::ONE;
+                            let prod_lcs: Vec<LinearCombination<F>> = prod.iter().map(|x| x.lc(F::ONE)).collect();
 
                             prod_lcs.iter().fold(lc, |acc, elem| {
                                 let r = acc + (coeff, elem);

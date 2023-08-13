@@ -19,7 +19,7 @@ where
 {
     range_check_lc(
         cs,
-        &num.lc(F::one()),
+        &num.lc(F::ONE),
         num.get_value().unwrap(),
         num_bits,
     )
@@ -47,9 +47,9 @@ where
                 || format!("bit {i}"),
                 || {
                     let r = if value_bits[i] {
-                        F::one()
+                        F::ONE
                     } else {
-                        F::zero()
+                        F::ZERO
                     };
                     Ok(r)
                 },
@@ -70,7 +70,7 @@ where
     cs.enforce(
         || format!("last bit of variable is a bit"),
         |mut lc| {
-            let mut f = F::one();
+            let mut f = F::ONE;
             lc = lc + lc_input;
             for v in bits.iter() {
                 f = f.double();
@@ -80,7 +80,7 @@ where
         },
         |mut lc| {
             lc = lc + CS::one();
-            let mut f = F::one();
+            let mut f = F::ONE;
             lc = lc - lc_input;
             for v in bits.iter() {
                 f = f.double();
@@ -103,8 +103,8 @@ where
     F: PrimeField + PrimeFieldBits,
 {
     let value_bits = value.to_le_bits();
-    let mut res = F::zero();
-    let mut coeff = F::one();
+    let mut res = F::ZERO;
+    let mut coeff = F::ONE;
     for i in 0..num_bits {
         if value_bits[i] {
             res += coeff;
@@ -134,7 +134,7 @@ pub fn alloc_num_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
   
     // Allocate t s.t. t=1 if a == b else 1/(a - b)
     let t_value = if a_value == b {
-        F::one()
+        F::ONE
     } else {
         (a_value - b).invert().unwrap()
     };
@@ -143,14 +143,14 @@ pub fn alloc_num_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
     cs.enforce(
         || "t*(a - b) = 1 - r",
         |lc| lc + t.get_variable(),
-        |lc| lc + &a.lc(F::one()) - &LinearCombination::from_coeff(CS::one(), b),
+        |lc| lc + &a.lc(F::ONE) - &LinearCombination::from_coeff(CS::one(), b),
         |lc| lc + CS::one() - r.get_variable(),
     );
   
     cs.enforce(
         || "r*(a - b) = 0",
         |lc| lc + r.get_variable(),
-        |lc| lc + &a.lc(F::one()) - &LinearCombination::from_coeff(CS::one(), b),
+        |lc| lc + &a.lc(F::ONE) - &LinearCombination::from_coeff(CS::one(), b),
         |lc| lc,
     );
   
@@ -168,9 +168,9 @@ where
     assert!(!value.is_negative());
 
     let mut base = F::from(u64::MAX);
-    base = base + F::one(); // 2^64 in the field
-    let mut coeff = F::one();
-    let mut res = F::zero();
+    base = base + F::ONE; // 2^64 in the field
+    let mut coeff = F::ONE;
+    let mut res = F::ZERO;
 
     let (_sign, digits) = value.to_u64_digits();
     for d in digits.into_iter() {
