@@ -2,11 +2,14 @@ use std::vec;
 use std::{marker::PhantomData, ops::Rem};
 
 use bellperson::gadgets::num::AllocatedNum;
-use bellperson::{SynthesisError, ConstraintSystem, LinearCombination};
-use bellperson::gadgets::{boolean::{AllocatedBit, Boolean}, num::Num};
+use bellperson::gadgets::{
+    boolean::{AllocatedBit, Boolean},
+    num::Num,
+};
+use bellperson::{ConstraintSystem, LinearCombination, SynthesisError};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, BigUint};
-use num_traits::{Zero, One, Signed};
+use num_traits::{One, Signed, Zero};
 
 use crate::util::*;
 
@@ -17,7 +20,7 @@ pub enum EmulatedLimbs<F: PrimeField + PrimeFieldBits> {
 
 impl<F> From<Vec<F>> for EmulatedLimbs<F>
 where
-    F: PrimeField + PrimeFieldBits
+    F: PrimeField + PrimeFieldBits,
 {
     fn from(value: Vec<F>) -> Self {
         EmulatedLimbs::Constant(value)
@@ -26,7 +29,7 @@ where
 
 impl<F> AsRef<EmulatedLimbs<F>> for EmulatedLimbs<F>
 where
-    F: PrimeField + PrimeFieldBits
+    F: PrimeField + PrimeFieldBits,
 {
     fn as_ref(&self) -> &EmulatedLimbs<F> {
         self
@@ -44,7 +47,7 @@ impl<F: PrimeField + PrimeFieldBits> Clone for EmulatedLimbs<F> {
 
 impl<F> EmulatedLimbs<F>
 where
-    F: PrimeField + PrimeFieldBits
+    F: PrimeField + PrimeFieldBits,
 {
     pub(crate) fn allocate_limbs<CS>(
         cs: &mut CS,
@@ -56,13 +59,11 @@ where
         let mut num_vec: Vec<Num<F>> = vec![];
 
         for (i, v) in limb_values.into_iter().enumerate() {
-            let allocated_limb = AllocatedNum::alloc(
-                cs.namespace(|| format!("allocating limb {i}")),
-                || Ok(*v),
-            )?;
+            let allocated_limb =
+                AllocatedNum::alloc(cs.namespace(|| format!("allocating limb {i}")), || Ok(*v))?;
             num_vec.push(Num::<F>::from(allocated_limb));
         }
-        
+
         Ok(EmulatedLimbs::Allocated(num_vec))
     }
 }
@@ -79,11 +80,11 @@ pub trait EmulatedFieldParams {
     fn num_limbs() -> usize;
     fn bits_per_limb() -> usize;
     fn modulus() -> BigInt;
-    
+
     fn is_modulus_pseudo_mersenne() -> bool {
         false
     }
-    
+
     fn pseudo_mersenne_params() -> Option<PseudoMersennePrime> {
         None
     }
@@ -117,7 +118,7 @@ where
     P: EmulatedFieldParams,
 {
     /// Converts a [BigInt] into an [EmulatedFieldElement]
-    /// 
+    ///
     /// Note that any [BigInt] larger than the field modulus is
     /// first reduced. A [BigInt] equal to the modulus itself is not
     /// reduced.
@@ -129,23 +130,23 @@ where
             v = v.rem(P::modulus());
         }
 
-        assert!(v.bits() <= (P::num_limbs()*P::bits_per_limb()) as u64);
-        let mut v_bits: Vec<bool> = vec![false; P::num_limbs()*P::bits_per_limb()];
+        assert!(v.bits() <= (P::num_limbs() * P::bits_per_limb()) as u64);
+        let mut v_bits: Vec<bool> = vec![false; P::num_limbs() * P::bits_per_limb()];
 
         let v_bytes = v.to_biguint().and_then(|w| Some(w.to_bytes_le())).unwrap();
         for (i, b) in v_bytes.into_iter().enumerate() {
             for j in 0..8usize {
                 if b & (1u8 << j) != 0 {
-                    v_bits[i*8 + j] = true;
+                    v_bits[i * 8 + j] = true;
                 }
             }
         }
-        
+
         let mut limbs = vec![F::ZERO; P::num_limbs()];
         for i in 0..P::num_limbs() {
             let mut coeff = F::ONE;
             for j in 0..P::bits_per_limb() {
-                if v_bits[i*P::bits_per_limb() + j] {
+                if v_bits[i * P::bits_per_limb() + j] {
                     limbs[i] += coeff
                 }
                 coeff = coeff.double();
@@ -171,9 +172,7 @@ where
         let one: &BigUint = &One::one();
         let mut base: BigUint = one.clone();
         let limbs = match value.limbs.clone() {
-            EmulatedLimbs::Allocated(x) => {
-                x.into_iter().map(|a| a.get_value().unwrap()).collect()
-            },
+            EmulatedLimbs::Allocated(x) => x.into_iter().map(|a| a.get_value().unwrap()).collect(),
             EmulatedLimbs::Constant(x) => x,
         };
         for i in 0..limbs.len() {
@@ -182,7 +181,6 @@ where
         }
         BigInt::from(res)
     }
-
 }
 
 impl<F, P> EmulatedFieldElement<F, P>
@@ -206,10 +204,7 @@ where
         F::CAPACITY as usize - P::bits_per_limb()
     }
 
-    pub fn new_internal_element(
-        limbs: EmulatedLimbs<F>,
-        overflow: usize,
-    ) -> Self {
+    pub fn new_internal_element(limbs: EmulatedLimbs<F>, overflow: usize) -> Self {
         Self {
             limbs,
             overflow,
@@ -225,9 +220,7 @@ where
         }
     }
 
-    pub fn is_constant(
-        &self,
-    ) -> bool {
+    pub fn is_constant(&self) -> bool {
         if let EmulatedLimbs::Constant(_) = self.limbs {
             true
         } else {
@@ -235,17 +228,14 @@ where
         }
     }
 
-    pub fn allocate_limbs<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<EmulatedLimbs<F>, SynthesisError>
+    pub fn allocate_limbs<CS>(&self, cs: &mut CS) -> Result<EmulatedLimbs<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         if let EmulatedLimbs::Constant(limb_values) = &self.limbs {
             EmulatedLimbs::<F>::allocate_limbs(
                 &mut cs.namespace(|| "allocate variables from constant limbs"),
-                limb_values
+                limb_values,
             )
         } else {
             eprintln!("input must have constant limb values");
@@ -257,23 +247,21 @@ where
     /// in-circuit checks for field membership. If you want to enforce membership
     /// in the field, you can call `check_field_membership` on the output of this
     /// method.
-    /// 
+    ///
     /// This method is suitable for allocating field elements from public inputs
     /// that are known to be in the field.
-    pub fn allocate_field_element_unchecked<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<Self, SynthesisError>
+    pub fn allocate_field_element_unchecked<CS>(&self, cs: &mut CS) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         if self.is_constant() {
             // Below statement does not perform a in-circuit check as the input is a constant
-            self.check_field_membership(&mut cs.namespace(|| "check field membership of constant input"))?;
-
-            let allocated_limbs = self.allocate_limbs(
-                &mut cs.namespace(|| "allocate variables from constant limbs"),
+            self.check_field_membership(
+                &mut cs.namespace(|| "check field membership of constant input"),
             )?;
+
+            let allocated_limbs = self
+                .allocate_limbs(&mut cs.namespace(|| "allocate variables from constant limbs"))?;
 
             let allocated_field_element = Self::new_internal_element(allocated_limbs, 0);
             Ok(allocated_field_element)
@@ -284,7 +272,7 @@ where
     }
 
     /// Enforces limb bit widths in a [EmulatedFieldElement]
-    /// 
+    ///
     /// All the limbs are constrained to have width that is at most equal to the width
     /// specified by [EmulatedFieldParams].
     /// If `modulus_width` is `true`, the most significant limb will be constrained to have
@@ -293,11 +281,7 @@ where
     /// For allocated elements, the number of limbs is required to be equal to P::num_limbs()
     /// only if `modulus_width` is true. In the calculation of quotients, the limbs may not
     /// be equal to P::num_limbs()
-    fn enforce_width<CS>(
-        &self,
-        cs: &mut CS,
-        modulus_width: bool,
-    ) -> Result<(), SynthesisError>
+    fn enforce_width<CS>(&self, cs: &mut CS, modulus_width: bool) -> Result<(), SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -310,7 +294,8 @@ where
             for i in 0..P::num_limbs() {
                 let mut required_bit_width = P::bits_per_limb();
                 if modulus_width && i == P::num_limbs() - 1 {
-                    required_bit_width = (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
+                    required_bit_width =
+                        (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
                 }
                 range_check_constant(limb_values[i], required_bit_width)?;
             }
@@ -320,17 +305,18 @@ where
                 eprintln!("Allocated limb count does not match required count");
                 return Err(SynthesisError::Unsatisfiable);
             }
-            
+
             for i in 0..allocated_limbs.len() {
                 let mut required_bit_width = P::bits_per_limb();
                 if modulus_width && i == P::num_limbs() - 1 {
-                    required_bit_width = (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
+                    required_bit_width =
+                        (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
                 }
 
                 range_check_num(
                     &mut cs.namespace(|| format!("range check limb {i}")),
                     &allocated_limbs[i],
-                    required_bit_width
+                    required_bit_width,
                 )?;
             }
         }
@@ -339,14 +325,11 @@ where
 
     /// Enforces limb bit widths in a [EmulatedFieldElement] if it is not an
     /// internal element or a constant
-    /// 
+    ///
     /// The number of limbs is required to be equal to P::num_limbs(), and
     /// the most significant limb will be constrained to have
     /// width less than or equal to the most significant limb of the modulus.
-    pub(crate) fn enforce_width_conditional<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<bool, SynthesisError>
+    pub(crate) fn enforce_width_conditional<CS>(&self, cs: &mut CS) -> Result<bool, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -362,7 +345,7 @@ where
 
     /// Constructs a [EmulatedFieldElement] from limbs of type [EmulatedLimbs].
     /// The method name is inherited from gnark.
-    /// 
+    ///
     /// All the limbs are constrained to have width that is at most equal to the width
     /// specified by [EmulatedFieldParams].
     /// If `strict` is `true`, the most significant limb will be constrained to have
@@ -398,14 +381,17 @@ where
             for i in 0..group_size {
                 coeffs[i] = bigint_to_scalar(&(BigInt::one() << P::bits_per_limb() * i));
             }
-            
-            let new_num_limbs = (P::num_limbs() + group_size - 1)/group_size;
+
+            let new_num_limbs = (P::num_limbs() + group_size - 1) / group_size;
             let mut res = vec![Num::<F>::zero(); new_num_limbs];
 
             for i in 0..new_num_limbs {
                 for j in 0..group_size {
-                    if i*group_size + j < allocated_limbs.len() {
-                        res[i] = allocated_limbs[i*group_size+j].clone().scale(coeffs[j]).add(&res[i]);
+                    if i * group_size + j < allocated_limbs.len() {
+                        res[i] = allocated_limbs[i * group_size + j]
+                            .clone()
+                            .scale(coeffs[j])
+                            .add(&res[i]);
                     }
                 }
             }
@@ -415,18 +401,14 @@ where
         return Err(SynthesisError::Unsatisfiable);
     }
 
-    pub fn check_field_membership<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<(), SynthesisError>
+    pub fn check_field_membership<CS>(&self, cs: &mut CS) -> Result<(), SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         if self.is_constant() {
             if BigInt::from(self) < P::modulus() {
                 return Ok(());
-            }
-            else {
+            } else {
                 return Err(SynthesisError::Unsatisfiable);
             }
         }
@@ -439,7 +421,8 @@ where
         match &self.limbs {
             EmulatedLimbs::Allocated(allocated_limbs) => {
                 // Number of modulus bits in most significant limb
-                let num_mod_bits_in_msl = (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
+                let num_mod_bits_in_msl =
+                    (P::modulus().bits() as usize - 1) % P::bits_per_limb() + 1;
 
                 for i in 0..P::num_limbs() {
                     let num_bits = if i == P::num_limbs() - 1 {
@@ -458,18 +441,18 @@ where
                 if P::is_modulus_pseudo_mersenne() {
                     let pseudo_mersenne_params = P::pseudo_mersenne_params().unwrap();
                     // Maximum value of most significant limb
-                    let max_msl_value = (BigInt::one() << num_mod_bits_in_msl)- BigInt::one();
+                    let max_msl_value = (BigInt::one() << num_mod_bits_in_msl) - BigInt::one();
                     // Maximum value of least significant limbs
                     let max_lsl_value = (BigInt::one() << P::bits_per_limb()) - BigInt::one();
 
                     let equality_bits: Vec<AllocatedBit> = (1..P::num_limbs())
-                        .map( |i| {
+                        .map(|i| {
                             let max_limb_value = if i == P::num_limbs() - 1 {
                                 bigint_to_scalar(&max_msl_value)
                             } else {
                                 bigint_to_scalar(&max_lsl_value)
                             };
-            
+
                             let bit = alloc_num_equals_constant(
                                 cs.namespace(|| format!("limb {i} equals max value")),
                                 &allocated_limbs[i],
@@ -480,9 +463,9 @@ where
                         .collect();
 
                     let mut kary_and = equality_bits[0].clone();
-                    for i in 1..P::num_limbs()-1 {
+                    for i in 1..P::num_limbs() - 1 {
                         kary_and = AllocatedBit::and(
-                            cs.namespace(|| format!("and of bits {} and {}", i-1, i)),
+                            cs.namespace(|| format!("and of bits {} and {}", i - 1, i)),
                             &kary_and,
                             &equality_bits[i],
                         )?
@@ -494,18 +477,27 @@ where
                     // If kary_and is true, then lsl_num = allocated_limbs[0] + c. Otherwise, lsl_num = allocated_limbs[0].
                     // The latter is already within P::bits_per_limb(). If the former only has P::bits_per_limb(),
                     // then allocated_limbs[0] is at most 2^(P::bits_per_limb())-1-c
-                    let lsl_num = allocated_limbs[0].clone().add_bool_with_coeff(CS::one(), &Boolean::Is(kary_and), c);
+                    let lsl_num = allocated_limbs[0].clone().add_bool_with_coeff(
+                        CS::one(),
+                        &Boolean::Is(kary_and),
+                        c,
+                    );
                     range_check_num(
-                        &mut cs.namespace(|| format!("range check limb least significant limb + possibly c")),
+                        &mut cs.namespace(|| {
+                            format!("range check limb least significant limb + possibly c")
+                        }),
                         &lsl_num,
                         P::bits_per_limb(),
                     )?;
-
                 } else {
-                    panic!("Check field membership implemented only for pseudo-Mersenne prime moduli");
+                    panic!(
+                        "Check field membership implemented only for pseudo-Mersenne prime moduli"
+                    );
                 }
-            },
-            EmulatedLimbs::Constant(_) => panic!("constant case is already handled; this code should be unreachable"),
+            }
+            EmulatedLimbs::Constant(_) => {
+                panic!("constant case is already handled; this code should be unreachable")
+            }
         }
 
         Ok(())
@@ -523,26 +515,34 @@ where
         CS: ConstraintSystem<F>,
     {
         if a1.len() != a0.len() {
-            eprintln!("Current implementation of conditionally_select only allows same number of limbs");
+            eprintln!(
+                "Current implementation of conditionally_select only allows same number of limbs"
+            );
             return Err(SynthesisError::Unsatisfiable);
         }
         let res_overflow = a1.overflow.max(a0.overflow);
 
         let res_values = if condition.get_value().unwrap() {
             match &a1.limbs {
-                EmulatedLimbs::Allocated(a1_var) => a1_var.iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
+                EmulatedLimbs::Allocated(a1_var) => a1_var
+                    .iter()
+                    .map(|x| x.get_value().unwrap())
+                    .collect::<Vec<_>>(),
                 EmulatedLimbs::Constant(a1_const) => a1_const.clone(),
             }
         } else {
             match &a0.limbs {
-                EmulatedLimbs::Allocated(a0_var) => a0_var.into_iter().map(|x| x.get_value().unwrap()).collect::<Vec<_>>(),
+                EmulatedLimbs::Allocated(a0_var) => a0_var
+                    .into_iter()
+                    .map(|x| x.get_value().unwrap())
+                    .collect::<Vec<_>>(),
                 EmulatedLimbs::Constant(a0_const) => a0_const.clone(),
             }
         };
 
         let res_alloc_limbs = EmulatedLimbs::allocate_limbs(
             &mut cs.namespace(|| "allocate result limbs"),
-            &res_values
+            &res_values,
         )?;
 
         match &res_alloc_limbs {
@@ -550,11 +550,15 @@ where
                 for i in 0..res_values.len() {
                     let a1_lc = match &a1.limbs {
                         EmulatedLimbs::Allocated(a1_var) => a1_var[i].lc(F::ONE),
-                        EmulatedLimbs::Constant(a1_const) => LinearCombination::<F>::from_coeff(CS::one(), a1_const[i]),
+                        EmulatedLimbs::Constant(a1_const) => {
+                            LinearCombination::<F>::from_coeff(CS::one(), a1_const[i])
+                        }
                     };
                     let a0_lc = match &a0.limbs {
                         EmulatedLimbs::Allocated(a0_var) => a0_var[i].lc(F::ONE),
-                        EmulatedLimbs::Constant(a0_const) => LinearCombination::<F>::from_coeff(CS::one(), a0_const[i]),
+                        EmulatedLimbs::Constant(a0_const) => {
+                            LinearCombination::<F>::from_coeff(CS::one(), a0_const[i])
+                        }
                     };
 
                     cs.enforce(
@@ -564,8 +568,8 @@ where
                         |lc| lc + &res_limbs[i].lc(F::ONE) - &a0_lc,
                     );
                 }
-            },
-            EmulatedLimbs::Constant(_) => panic!("Unreachable match arm")
+            }
+            EmulatedLimbs::Constant(_) => panic!("Unreachable match arm"),
         }
         let res = Self::new_internal_element(res_alloc_limbs, res_overflow);
         Ok(res)
@@ -582,32 +586,22 @@ where
     where
         CS: ConstraintSystem<F>,
     {
-
         if let Some(bit) = select_bits.next() {
             if inputs.len() & 1 != 0 {
                 return Err(SynthesisError::Unsatisfiable);
             }
             let left_half = &inputs[..(inputs.len() / 2)];
             let right_half = &inputs[(inputs.len() / 2)..];
-            let left = Self::mux_tree(
-                &mut cs.namespace(|| "left"),
-                select_bits.clone(),
-                left_half
-            )?;
-            let right = Self::mux_tree(
-                &mut cs.namespace(|| "right"),
-                select_bits,
-                right_half
-            )?;
+            let left =
+                Self::mux_tree(&mut cs.namespace(|| "left"), select_bits.clone(), left_half)?;
+            let right = Self::mux_tree(&mut cs.namespace(|| "right"), select_bits, right_half)?;
             Self::conditionally_select(&mut cs.namespace(|| "join"), &left, &right, bit)
-        }
-        else {
+        } else {
             if inputs.len() != 1 {
                 return Err(SynthesisError::Unsatisfiable);
             }
             Ok(inputs[0].clone())
         }
-
     }
 }
 
@@ -631,7 +625,11 @@ mod tests {
         }
 
         fn modulus() -> BigInt {
-            BigInt::parse_bytes(b"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed", 16).unwrap()
+            BigInt::parse_bytes(
+                b"7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed",
+                16,
+            )
+            .unwrap()
         }
 
         fn is_modulus_pseudo_mersenne() -> bool {
@@ -644,7 +642,7 @@ mod tests {
                 c: BigInt::from(19),
             })
         }
-    } 
+    }
 
     #[test]
     fn test_constant_equality() {
@@ -658,10 +656,7 @@ mod tests {
         assert!(a.is_ok());
         let a = a.unwrap();
 
-        let res = a.assert_equality_to_constant(
-            &mut cs.namespace(|| "check equality"),
-            &a_const,
-        );
+        let res = a.assert_equality_to_constant(&mut cs.namespace(|| "check equality"), &a_const);
         assert!(res.is_ok());
 
         if !cs.is_satisfied() {
@@ -692,7 +687,6 @@ mod tests {
         let a = a.unwrap();
         let b = b.unwrap();
         let sum = sum.unwrap();
-
 
         let sum_calc = a.add(&mut cs.namespace(|| "a + b"), &b);
         assert!(sum_calc.is_ok());
@@ -736,7 +730,6 @@ mod tests {
         let b = b.unwrap();
         let diff = diff.unwrap();
 
-
         let diff_calc = a.sub(&mut cs.namespace(|| "a - b"), &b);
         assert!(diff_calc.is_ok());
         let diff_calc = diff_calc.unwrap();
@@ -754,7 +747,7 @@ mod tests {
         assert!(cs.is_satisfied());
         println!("Number of constraints = {:?}", cs.num_constraints());
     }
-    
+
     #[test]
     fn test_mul() {
         let mut cs = TestConstraintSystem::<Fp>::new();
@@ -776,7 +769,6 @@ mod tests {
         let a = a.unwrap();
         let b = b.unwrap();
         let prod = prod.unwrap();
-
 
         let prod_calc = a.mul(&mut cs.namespace(|| "a * b"), &b);
         assert!(prod_calc.is_ok());
@@ -821,7 +813,6 @@ mod tests {
         let a = a.unwrap();
         let b = b.unwrap();
         let ratio = ratio.unwrap();
-
 
         let ratio_calc = a.divide(&mut cs.namespace(|| "a divided by b"), &b);
         assert!(ratio_calc.is_ok());
@@ -872,7 +863,6 @@ mod tests {
         let b = b.unwrap();
         let b_inv = b_inv.unwrap();
 
-
         let b_inv_calc = b.inverse(&mut cs.namespace(|| "b inverse"));
         assert!(b_inv_calc.is_ok());
         let b_inv_calc = b_inv_calc.unwrap();
@@ -910,17 +900,22 @@ mod tests {
         let a_int = rng.gen_bigint_range(&BigInt::zero(), &Ed25519Fp::modulus());
         let a_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&a_int);
         let a = a_const.allocate_field_element_unchecked(&mut cs.namespace(|| "a"));
-        println!("Num constraints before field membership check = {:?}", cs.num_constraints());
+        println!(
+            "Num constraints before field membership check = {:?}",
+            cs.num_constraints()
+        );
         assert!(a.is_ok());
         let a = a.unwrap();
 
-        let res = a.check_field_membership(
-            &mut cs.namespace(|| "check field membership of random a"),
-        );
+        let res =
+            a.check_field_membership(&mut cs.namespace(|| "check field membership of random a"));
         assert!(res.is_ok());
 
         assert!(cs.is_satisfied());
-        println!("Num constraints after field membership check = {:?}", cs.num_constraints());
+        println!(
+            "Num constraints after field membership check = {:?}",
+            cs.num_constraints()
+        );
 
         let b_int = &Ed25519Fp::modulus() - BigInt::one();
         let b_const = EmulatedFieldElement::<Fp, Ed25519Fp>::from(&b_int);
@@ -928,9 +923,7 @@ mod tests {
         assert!(b.is_ok());
         let b = b.unwrap();
 
-        let res = b.check_field_membership(
-            &mut cs.namespace(|| "check field membership of q-1"),
-        );
+        let res = b.check_field_membership(&mut cs.namespace(|| "check field membership of q-1"));
         assert!(res.is_ok());
 
         assert!(cs.is_satisfied());
@@ -940,13 +933,10 @@ mod tests {
         assert!(q.is_ok());
         let q = q.unwrap();
 
-        let res = q.check_field_membership(
-            &mut cs.namespace(|| "check field non-membership of q"),
-        );
+        let res = q.check_field_membership(&mut cs.namespace(|| "check field non-membership of q"));
         assert!(res.is_ok());
 
         assert!(!cs.is_satisfied());
-
     }
 
     #[test]
@@ -963,9 +953,11 @@ mod tests {
         let conditions = vec![false, true];
         for c in conditions.clone() {
             let condition = Boolean::constant(c);
-            
+
             let res = EmulatedFieldElement::<Fp, Ed25519Fp>::conditionally_select(
-                &mut cs.namespace(|| format!("conditionally select constant a0 or a1 for condition = {c}")),
+                &mut cs.namespace(|| {
+                    format!("conditionally select constant a0 or a1 for condition = {c}")
+                }),
                 &a0_const,
                 &a1_const,
                 &condition,
@@ -976,21 +968,24 @@ mod tests {
             }
             let res = res.unwrap();
 
-
             let res_expected_limbs = match (&a0_const.limbs, &a1_const.limbs) {
-                (EmulatedLimbs::Constant(a0_const_limbs), EmulatedLimbs::Constant(a1_const_limbs)) => {
+                (
+                    EmulatedLimbs::Constant(a0_const_limbs),
+                    EmulatedLimbs::Constant(a1_const_limbs),
+                ) => {
                     if c {
                         a1_const_limbs
                     } else {
                         a0_const_limbs
                     }
-                },
+                }
                 _ => panic!("Both sets of limbs must be constant"),
             };
 
             if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
                 for i in 0..res_limbs.len() {
-                    cs.enforce(|| format!("c constant limb {i} equality for condition = {c}"),
+                    cs.enforce(
+                        || format!("c constant limb {i} equality for condition = {c}"),
                         |lc| lc + &res_limbs[i].lc(Fp::one()),
                         |lc| lc + one,
                         |lc| lc + (res_expected_limbs[i], one),
@@ -1001,7 +996,7 @@ mod tests {
                 eprintln!("res should have allocated limbs");
                 assert!(false);
             }
-            
+
             if !cs.is_satisfied() {
                 eprintln!("{:?}", cs.which_is_unsatisfied());
             }
@@ -1018,16 +1013,21 @@ mod tests {
 
         for c in conditions {
             let condition = Boolean::constant(c);
-            
+
             let res = EmulatedFieldElement::<Fp, Ed25519Fp>::conditionally_select(
-                &mut cs.namespace(|| format!("conditionally select variable a or b for condition = {c}")),
+                &mut cs.namespace(|| {
+                    format!("conditionally select variable a or b for condition = {c}")
+                }),
                 &a0,
                 &a1,
                 &condition,
             );
             assert!(res.is_ok());
             if !c {
-                println!("Number of constraints = {:?}", cs.num_constraints()-num_constraints_here);
+                println!(
+                    "Number of constraints = {:?}",
+                    cs.num_constraints() - num_constraints_here
+                );
             }
             let res = res.unwrap();
 
@@ -1038,13 +1038,14 @@ mod tests {
                     } else {
                         a0_limbs
                     }
-                },
+                }
                 _ => panic!("Both sets of limbs must be allocated"),
             };
 
             if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
                 for i in 0..res_limbs.len() {
-                    cs.enforce(|| format!("c variable limb {i} equality for condition = {c}"),
+                    cs.enforce(
+                        || format!("c variable limb {i} equality for condition = {c}"),
                         |lc| lc + &res_limbs[i].lc(Fp::one()),
                         |lc| lc + one,
                         |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
@@ -1055,7 +1056,7 @@ mod tests {
                 eprintln!("res should have allocated limbs");
                 assert!(false);
             }
-            
+
             if !cs.is_satisfied() {
                 eprintln!("{:?}", cs.which_is_unsatisfied());
             }
@@ -1082,9 +1083,7 @@ mod tests {
 
         let a_consts = a_ints
             .iter()
-            .map(
-                |i| EmulatedFieldElement::<Fp, Ed25519Fp>::from(i)
-            )
+            .map(|i| EmulatedFieldElement::<Fp, Ed25519Fp>::from(i))
             .collect::<Vec<_>>();
         let one = TestConstraintSystem::<Fp>::one();
 
@@ -1092,11 +1091,7 @@ mod tests {
         for i in 0..num_inputs {
             let mut bool_vec = vec![];
             for j in 0..num_selector_bits {
-                let bit = if (i >> j) & 1 == 1 {
-                    true
-                } else {
-                    false
-                };
+                let bit = if (i >> j) & 1 == 1 { true } else { false };
                 bool_vec.push(bit);
             }
             conditions.push(bool_vec); // little-endian
@@ -1111,7 +1106,13 @@ mod tests {
                 .collect::<Vec<_>>();
 
             let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
-                &mut cs.namespace(|| format!("select one of constants a0 to a{} for conditions = {:?}", num_inputs-1, condition_bools)),
+                &mut cs.namespace(|| {
+                    format!(
+                        "select one of constants a0 to a{} for conditions = {:?}",
+                        num_inputs - 1,
+                        condition_bools
+                    )
+                }),
                 condition_booleans.iter(),
                 &a_consts,
             );
@@ -1126,11 +1127,9 @@ mod tests {
             let a_const_limbs_vec = a_consts
                 .clone()
                 .into_iter()
-                .map(|a_const| {
-                    match &a_const.limbs {
-                        EmulatedLimbs::Constant(a_const_limbs) => a_const_limbs.clone(),
-                        EmulatedLimbs::Allocated(_) => panic!("Unreachable match arm"),
-                    }
+                .map(|a_const| match &a_const.limbs {
+                    EmulatedLimbs::Constant(a_const_limbs) => a_const_limbs.clone(),
+                    EmulatedLimbs::Allocated(_) => panic!("Unreachable match arm"),
                 })
                 .collect::<Vec<_>>();
 
@@ -1138,7 +1137,13 @@ mod tests {
 
             if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
                 for i in 0..res_limbs.len() {
-                    cs.enforce(|| format!("c constant limb {i} equality for condition = {:?}", condition_bools),
+                    cs.enforce(
+                        || {
+                            format!(
+                                "c constant limb {i} equality for condition = {:?}",
+                                condition_bools
+                            )
+                        },
                         |lc| lc + &res_limbs[i].lc(Fp::one()),
                         |lc| lc + one,
                         |lc| lc + (res_expected_limbs[i], one),
@@ -1149,20 +1154,21 @@ mod tests {
                 eprintln!("res should have allocated limbs");
                 assert!(false);
             }
-            
+
             if !cs.is_satisfied() {
                 eprintln!("{:?}", cs.which_is_unsatisfied());
             }
-            assert!(cs.is_satisfied()); 
+            assert!(cs.is_satisfied());
         }
 
         let num_constraints_here = cs.num_constraints();
 
-        let a_vars = a_consts.iter().enumerate()
+        let a_vars = a_consts
+            .iter()
+            .enumerate()
             .map(|(i, a_const)| {
-                let a = a_const.allocate_field_element_unchecked(
-                    &mut cs.namespace(|| format!("a[{i}]")),
-                );
+                let a = a_const
+                    .allocate_field_element_unchecked(&mut cs.namespace(|| format!("a[{i}]")));
                 assert!(a.is_ok());
                 a.unwrap()
             })
@@ -1177,7 +1183,13 @@ mod tests {
                 .collect::<Vec<_>>();
 
             let res = EmulatedFieldElement::<Fp, Ed25519Fp>::mux_tree(
-                &mut cs.namespace(|| format!("select one of variables a0 to a{} for conditions = {:?}", num_inputs-1, condition_bools)),
+                &mut cs.namespace(|| {
+                    format!(
+                        "select one of variables a0 to a{} for conditions = {:?}",
+                        num_inputs - 1,
+                        condition_bools
+                    )
+                }),
                 condition_booleans.iter(),
                 &a_vars,
             );
@@ -1192,11 +1204,9 @@ mod tests {
             let a_var_limbs_vec = a_vars
                 .clone()
                 .into_iter()
-                .map(|a_var| {
-                    match &a_var.limbs {
-                        EmulatedLimbs::Allocated(a_var_limbs) => a_var_limbs.clone(),
-                        EmulatedLimbs::Constant(_) => panic!("Unreachable match arm"),
-                    }
+                .map(|a_var| match &a_var.limbs {
+                    EmulatedLimbs::Allocated(a_var_limbs) => a_var_limbs.clone(),
+                    EmulatedLimbs::Constant(_) => panic!("Unreachable match arm"),
                 })
                 .collect::<Vec<_>>();
 
@@ -1204,7 +1214,13 @@ mod tests {
 
             if let EmulatedLimbs::Allocated(res_limbs) = res.limbs {
                 for i in 0..res_limbs.len() {
-                    cs.enforce(|| format!("c variable limb {i} equality for condition = {:?}", condition_bools),
+                    cs.enforce(
+                        || {
+                            format!(
+                                "c variable limb {i} equality for condition = {:?}",
+                                condition_bools
+                            )
+                        },
                         |lc| lc + &res_limbs[i].lc(Fp::one()),
                         |lc| lc + one,
                         |lc| lc + &res_expected_limbs[i].lc(Fp::one()),
@@ -1215,13 +1231,11 @@ mod tests {
                 eprintln!("res should have allocated limbs");
                 assert!(false);
             }
-            
+
             if !cs.is_satisfied() {
                 eprintln!("{:?}", cs.which_is_unsatisfied());
             }
-            assert!(cs.is_satisfied()); 
+            assert!(cs.is_satisfied());
         }
-
     }
-
 }

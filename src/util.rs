@@ -1,11 +1,11 @@
 use std::ops::Rem;
 
 use bellperson::gadgets::num::Num;
-use bellperson::{LinearCombination, SynthesisError, ConstraintSystem, Variable};
 use bellperson::gadgets::{boolean::AllocatedBit, num::AllocatedNum};
+use bellperson::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
-use num_traits::{Signed, One, Zero};
+use num_traits::{One, Signed, Zero};
 
 /// Range check a Num
 pub fn range_check_num<F, CS>(
@@ -17,12 +17,7 @@ where
     F: PrimeField + PrimeFieldBits,
     CS: ConstraintSystem<F>,
 {
-    range_check_lc(
-        cs,
-        &num.lc(F::ONE),
-        num.get_value().unwrap(),
-        num_bits,
-    )
+    range_check_lc(cs, &num.lc(F::ONE), num.get_value().unwrap(), num_bits)
 }
 
 /// Range check an expression represented by a LinearCombination
@@ -46,11 +41,7 @@ where
             cs.alloc(
                 || format!("bit {i}"),
                 || {
-                    let r = if value_bits[i] {
-                        F::ONE
-                    } else {
-                        F::ZERO
-                    };
+                    let r = if value_bits[i] { F::ONE } else { F::ZERO };
                     Ok(r)
                 },
             )
@@ -95,10 +86,7 @@ where
 }
 
 /// Range check a constant field element
-pub fn range_check_constant<F>(
-    value: F,
-    num_bits: usize,
-) -> Result<(), SynthesisError>
+pub fn range_check_constant<F>(value: F, num_bits: usize) -> Result<(), SynthesisError>
 where
     F: PrimeField + PrimeFieldBits,
 {
@@ -120,7 +108,7 @@ where
 }
 
 /// Check that a Num equals a constant and return a bit
-/// 
+///
 /// Based on `alloc_num_equals` in `Nova/src/gadgets/utils.rs`
 pub fn alloc_num_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
     mut cs: CS,
@@ -131,7 +119,7 @@ pub fn alloc_num_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
     // It equals `true` if `a` equals `b`, `false` otherwise
     let a_value = a.get_value().unwrap();
     let r = AllocatedBit::alloc(cs.namespace(|| "r"), Some(a_value == b))?;
-  
+
     // Allocate t s.t. t=1 if a == b else 1/(a - b)
     let t_value = if a_value == b {
         F::ONE
@@ -139,28 +127,26 @@ pub fn alloc_num_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
         (a_value - b).invert().unwrap()
     };
     let t = AllocatedNum::alloc(cs.namespace(|| "t"), || Ok(t_value))?;
-  
+
     cs.enforce(
         || "t*(a - b) = 1 - r",
         |lc| lc + t.get_variable(),
         |lc| lc + &a.lc(F::ONE) - &LinearCombination::from_coeff(CS::one(), b),
         |lc| lc + CS::one() - r.get_variable(),
     );
-  
+
     cs.enforce(
         || "r*(a - b) = 0",
         |lc| lc + r.get_variable(),
         |lc| lc + &a.lc(F::ONE) - &LinearCombination::from_coeff(CS::one(), b),
         |lc| lc,
     );
-  
+
     Ok(r)
 }
 
 /// Convert a non-negative BigInt into a field element
-pub fn bigint_to_scalar<F>(
-    value: &BigInt,
-) -> F
+pub fn bigint_to_scalar<F>(value: &BigInt) -> F
 where
     F: PrimeField + PrimeFieldBits,
 {
@@ -176,25 +162,22 @@ where
     for d in digits.into_iter() {
         let d_f = F::from(d);
         res += d_f * coeff;
-        coeff = coeff*base;
+        coeff = coeff * base;
     }
     res
 }
 
 /// Construct a [BigInt] from a vector of [BigInt] limbs with base equal to 2^num_bits_per_limb
-pub fn recompose(
-    limbs: &Vec<BigInt>,
-    num_bits_per_limb: usize,
-) -> Result<BigInt, SynthesisError> {
-    if limbs.len() == 0{
+pub fn recompose(limbs: &Vec<BigInt>, num_bits_per_limb: usize) -> Result<BigInt, SynthesisError> {
+    if limbs.len() == 0 {
         eprintln!("Empty input");
         return Err(SynthesisError::Unsatisfiable);
     }
-    
+
     let mut res = BigInt::zero();
     for i in 0..limbs.len() {
         res <<= num_bits_per_limb;
-        res += &limbs[limbs.len()-i-1];
+        res += &limbs[limbs.len() - i - 1];
     }
     Ok(res)
 }

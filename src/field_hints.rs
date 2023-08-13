@@ -1,14 +1,13 @@
 use std::ops::{Div, Rem};
 
-use bellperson::{SynthesisError, ConstraintSystem};
-use ff::{PrimeFieldBits, PrimeField};
+use bellperson::{ConstraintSystem, SynthesisError};
+use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 use num_traits::Zero;
 
 use crate::field_element::EmulatedLimbs;
+use crate::util::{bigint_to_scalar, decompose};
 use crate::{field_element::EmulatedFieldElement, field_element::EmulatedFieldParams};
-use crate::util::{decompose, bigint_to_scalar};
-
 
 impl<F, P> EmulatedFieldElement<F, P>
 where
@@ -16,10 +15,7 @@ where
     P: EmulatedFieldParams,
 {
     /// Computes the remainder modulo the field modulus
-    pub(crate) fn compute_rem<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<Self, SynthesisError>
+    pub(crate) fn compute_rem<CS>(&self, cs: &mut CS) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -28,9 +24,8 @@ where
         let r_int = a_int.rem(p);
         let r_value = Self::from(&r_int);
 
-        let res_limbs = r_value.allocate_limbs(
-            &mut cs.namespace(|| "allocate from remainder value")
-        )?;
+        let res_limbs =
+            r_value.allocate_limbs(&mut cs.namespace(|| "allocate from remainder value"))?;
 
         let res = Self::pack_limbs(
             &mut cs.namespace(|| "enforce bitwidths on remainder"),
@@ -41,10 +36,7 @@ where
     }
 
     /// Computes the quotient
-    pub(crate) fn compute_quotient<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<Self, SynthesisError>
+    pub(crate) fn compute_quotient<CS>(&self, cs: &mut CS) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -78,10 +70,7 @@ where
     }
 
     /// Computes the multiplicative inverse
-    pub(crate) fn compute_inverse<CS>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<Self, SynthesisError>
+    pub(crate) fn compute_inverse<CS>(&self, cs: &mut CS) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -97,9 +86,8 @@ where
         let a_inv_int = a_int.modpow(&p_minus_2, &p);
         let a_inv_value = Self::from(&a_inv_int);
 
-        let a_inv_limbs = a_inv_value.allocate_limbs(
-            &mut cs.namespace(|| "allocate from inverse value")
-        )?;
+        let a_inv_limbs =
+            a_inv_value.allocate_limbs(&mut cs.namespace(|| "allocate from inverse value"))?;
 
         let a_inv = Self::pack_limbs(
             &mut cs.namespace(|| "enforce bitwidths on inverse"),
@@ -134,9 +122,8 @@ where
 
         let ratio_value = Self::from(&ratio_int);
 
-        let ratio_limbs = ratio_value.allocate_limbs(
-            &mut cs.namespace(|| "allocate from ratio value")
-        )?;
+        let ratio_limbs =
+            ratio_value.allocate_limbs(&mut cs.namespace(|| "allocate from ratio value"))?;
 
         let ratio = Self::pack_limbs(
             &mut cs.namespace(|| "enforce bitwidths on ratio"),
@@ -146,5 +133,4 @@ where
 
         Ok(ratio)
     }
-
 }
