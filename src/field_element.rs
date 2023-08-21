@@ -1,12 +1,12 @@
 use std::vec;
 use std::{marker::PhantomData, ops::Rem};
 
-use bellperson::gadgets::num::AllocatedNum;
-use bellperson::gadgets::{
+use bellpepper_core::num::AllocatedNum;
+use bellpepper_core::{
     boolean::{AllocatedBit, Boolean},
     num::Num,
 };
-use bellperson::{ConstraintSystem, LinearCombination, SynthesisError};
+use bellpepper_core::{ConstraintSystem, LinearCombination, SynthesisError};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, Signed, Zero};
@@ -607,7 +607,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use bellperson::gadgets::test::TestConstraintSystem;
+    use bellpepper_core::test_cs::TestConstraintSystem;
     use num_bigint::RandBigInt;
 
     use super::*;

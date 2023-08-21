@@ -1,6 +1,6 @@
 use std::ops::{Div, Rem};
 
-use bellperson::{ConstraintSystem, SynthesisError};
+use bellpepper_core::{ConstraintSystem, SynthesisError};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 use num_traits::Zero;

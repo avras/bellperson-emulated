@@ -1,6 +1,6 @@
-# bellperson-emulated
+# bellpepper-emulated
 
-Nonnative arithmetic library using [bellperson](https://github.com/filecoin-project/bellperson) inspired by the [emulated](https://github.com/Consensys/gnark/tree/master/std/math/emulated) package in [Gnark](https://github.com/Consensys/gnark)
+Nonnative arithmetic library using [bellpepper](https://github.com/lurk-lab/bellpepper) inspired by the [emulated](https://github.com/Consensys/gnark/tree/master/std/math/emulated) package in [Gnark](https://github.com/Consensys/gnark)
 
 ## License
 

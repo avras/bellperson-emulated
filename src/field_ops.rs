@@ -4,9 +4,9 @@ use std::{
     ops::{Rem, Shl},
 };
 
-use bellperson::gadgets::boolean::{AllocatedBit, Boolean};
-use bellperson::gadgets::num::Num;
-use bellperson::{gadgets::num::AllocatedNum, ConstraintSystem, LinearCombination, SynthesisError};
+use bellpepper_core::boolean::{AllocatedBit, Boolean};
+use bellpepper_core::num::{AllocatedNum, Num};
+use bellpepper_core::{ConstraintSystem, LinearCombination, SynthesisError};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 use num_traits::One;

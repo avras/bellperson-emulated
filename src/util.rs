@@ -1,8 +1,8 @@
 use std::ops::Rem;
 
-use bellperson::gadgets::num::Num;
-use bellperson::gadgets::{boolean::AllocatedBit, num::AllocatedNum};
-use bellperson::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
+use bellpepper_core::boolean::AllocatedBit;
+use bellpepper_core::num::{AllocatedNum, Num};
+use bellpepper_core::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
 use ff::{PrimeField, PrimeFieldBits};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
