@@ -582,10 +582,14 @@ where
                 }
             }
             (EmulatedLimbs::Allocated(a_var), EmulatedLimbs::Allocated(b_var)) => {
-                let a_var_limb_values: Vec<F> =
-                    a_var.iter().map(|v| v.get_value().unwrap_or_default()).collect();
-                let b_var_limb_values: Vec<F> =
-                    b_var.iter().map(|v| v.get_value().unwrap_or_default()).collect();
+                let a_var_limb_values: Vec<F> = a_var
+                    .iter()
+                    .map(|v| v.get_value().unwrap_or_default())
+                    .collect();
+                let b_var_limb_values: Vec<F> = b_var
+                    .iter()
+                    .map(|v| v.get_value().unwrap_or_default())
+                    .collect();
                 for i in 0..a.len() {
                     for j in 0..b.len() {
                         prod_values[i + j] += a_var_limb_values[i] * b_var_limb_values[j];

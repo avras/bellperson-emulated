@@ -17,7 +17,12 @@ where
     F: PrimeField + PrimeFieldBits,
     CS: ConstraintSystem<F>,
 {
-    range_check_lc(cs, &num.lc(F::ONE), num.get_value().unwrap_or_default(), num_bits)
+    range_check_lc(
+        cs,
+        &num.lc(F::ONE),
+        num.get_value().unwrap_or_default(),
+        num_bits,
+    )
 }
 
 /// Range check an expression represented by a LinearCombination

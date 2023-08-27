@@ -172,7 +172,10 @@ where
         let one: &BigUint = &One::one();
         let mut base: BigUint = one.clone();
         let limbs = match value.limbs.clone() {
-            EmulatedLimbs::Allocated(x) => x.into_iter().map(|a| a.get_value().unwrap_or_default()).collect(),
+            EmulatedLimbs::Allocated(x) => x
+                .into_iter()
+                .map(|a| a.get_value().unwrap_or_default())
+                .collect(),
             EmulatedLimbs::Constant(x) => x,
         };
         for i in 0..limbs.len() {
