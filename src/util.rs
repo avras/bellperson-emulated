@@ -17,7 +17,12 @@ where
     F: PrimeField + PrimeFieldBits,
     CS: ConstraintSystem<F>,
 {
-    range_check_lc(cs, &num.lc(F::ONE), num.get_value().unwrap(), num_bits)
+    range_check_lc(
+        cs,
+        &num.lc(F::ONE),
+        num.get_value().unwrap_or_default(),
+        num_bits,
+    )
 }
 
 /// Range check an expression represented by a LinearCombination
@@ -117,7 +122,7 @@ pub fn alloc_num_equals_constant<F: PrimeField, CS: ConstraintSystem<F>>(
 ) -> Result<AllocatedBit, SynthesisError> {
     // Allocate and constrain `r`: result boolean bit.
     // It equals `true` if `a` equals `b`, `false` otherwise
-    let a_value = a.get_value().unwrap();
+    let a_value = a.get_value().unwrap_or_default();
     let r = AllocatedBit::alloc(cs.namespace(|| "r"), Some(a_value == b))?;
 
     // Allocate t s.t. t=1 if a == b else 1/(a - b)
